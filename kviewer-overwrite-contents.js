@@ -2,9 +2,9 @@
   "use strict";
 
   const translations = {
-    詳細: "Details",
+    詳細: "Lihat Detail",
     メニュー: "Menu",
-    並べ替え: "Sort",
+    並べ替え: "Urutkan",
   };
 
   // Fungsi untuk mengganti teks dengan cara yang lebih aman
