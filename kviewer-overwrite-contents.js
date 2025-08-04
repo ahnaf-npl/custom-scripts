@@ -7,7 +7,7 @@
     並べ替え: "Urutkan",
   };
 
-  // Fungsi untuk mengganti teks dengan cara yang lebih amannnnnnnnnn
+  // Fungsi untuk mengganti teks dengan cara yang lebih amannnnnnnnnnnn
   function replaceTextInNode(node) {
     // Hanya proses node yang merupakan elemen (tipe 1)
     if (node.nodeType !== 1) {
