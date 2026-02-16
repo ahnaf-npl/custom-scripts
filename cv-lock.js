@@ -1,65 +1,90 @@
 (function() {
   "use strict";
 
-  // Event saat form selesai dimuat
-  fb.events.form.mounted = [function(state) {
-    
-    // --- KONFIGURASI ---
-    var fieldCode = 'status_lock'; // Field code di Kintone
-    var lockValue = 'LOCKED';      // Value yang men-trigger lock
-    // -------------------
-
-    // Ambil value dari record saat ini
-    // Pastikan field 'status_lock' sudah ditambahkan ke Form Bridge (bisa diset hidden)
-    var currentStatus = state.record[fieldCode] ? state.record[fieldCode].value : '';
-
-    // Logika Penguncian
-    if (currentStatus === lockValue) {
-      
-      // 1. Tampilkan Sweet Alert
-      // Kita bungkus dalam setTimeout agar render form selesai dulu baru alert muncul
-      setTimeout(function() {
-        Swal.fire({
-          icon: 'info', // Ikon: info, warning, error, success
-          title: 'Akses Terkunci',
-          text: 'Data CV Anda sedang dalam proses verifikasi atau sudah terkunci. Anda tidak dapat melakukan perubahan data saat ini.',
-          footer: 'Silakan hubungi admin jika ada perubahan mendesak.',
-          allowOutsideClick: false, // User tidak bisa tutup modal dengan klik luar
-          allowEscapeKey: false,    // User tidak bisa tutup dengan tombol ESC
-          confirmButtonText: 'Mengerti',
-          confirmButtonColor: '#3085d6',
-        });
-      }, 500);
-
-      // 2. Matikan Fungsi Edit (Disable Form)
-      disableForm();
+  // Fungsi pembungkus untuk menunggu object 'fb' siap
+  function waitForFormBridge() {
+    if (typeof fb === 'undefined') {
+      // Jika 'fb' belum ada, tunggu 100ms lalu cek lagi
+      setTimeout(waitForFormBridge, 100);
+      return;
     }
+    
+    // Jika 'fb' sudah siap, jalankan inisialisasi
+    initCustomization();
+  }
 
-    return state;
-  }];
+  function initCustomization() {
+    fb.events.form.mounted = [function(state) {
+      
+      // --- KONFIGURASI ---
+      var fieldCode = 'status_lock'; // Field code Kintone
+      var lockValue = 'LOCKED';      // Value penentu kunci
+      // -------------------
 
-  // Fungsi untuk mematikan interaksi pada form
-  function disableForm() {
-    // Sembunyikan tombol Submit/Confirm
+      // Ambil value dari state record
+      var currentStatus = state.record[fieldCode] ? state.record[fieldCode].value : '';
+
+      // --- LOGIC UTAMA ---
+      if (currentStatus === lockValue) {
+        
+        // 1. Tampilkan Sweet Alert
+        // Kita gunakan setTimeout kecil agar tidak bentrok dengan rendering UI
+        setTimeout(function() {
+          if (typeof Swal !== 'undefined') {
+            Swal.fire({
+              icon: 'info',
+              title: 'Akses Terkunci',
+              text: 'Data CV Anda sudah terkunci. Anda tidak dapat melakukan perubahan data saat ini.',
+              footer: 'Silakan hubungi admin jika ada perubahan mendesak.',
+              allowOutsideClick: false,
+              allowEscapeKey: false,
+              confirmButtonText: 'Mengerti',
+              confirmButtonColor: '#3085d6',
+            });
+          } else {
+            // Fallback jika SweetAlert gagal load
+            alert("⚠️ DATA TERKUNCI\nAnda tidak dapat mengubah data ini.");
+          }
+        }, 500);
+
+        // 2. Disable Form
+        disableForm(fieldCode);
+      }
+
+      // Sembunyikan tampilan field Status Lock itu sendiri (agar tidak mengganggu visual)
+      var lockFieldElement = document.querySelector('[data-field-code="' + fieldCode + '"]');
+      if (lockFieldElement) {
+        lockFieldElement.style.display = 'none';
+      }
+
+      return state;
+    }];
+  }
+
+  // Fungsi untuk mematikan interaksi form
+  function disableForm(fieldCodeLock) {
+    // Sembunyikan tombol Submit
     var submitBtns = document.querySelectorAll('.fb-submit, button[type="submit"]');
     submitBtns.forEach(function(btn) {
       btn.style.display = 'none';
     });
 
-    // Disable semua input, select, dan textarea
+    // Disable input
     var allInputs = document.querySelectorAll('input, select, textarea');
     allInputs.forEach(function(el) {
       el.disabled = true;
-      el.style.backgroundColor = "#f0f0f0"; // Opsional: Beri warna abu-abu agar terlihat disabled
+      el.style.backgroundColor = "#f3f4f6"; // Warna abu-abu (sesuai tema Toyokumo)
       el.style.cursor = "not-allowed";
     });
 
-    // Opsional: Matikan pointer events pada seluruh konten form agar tidak bisa diklik sama sekali
+    // Matikan klik pada konten form
     var formContent = document.querySelector('.fb-content');
     if (formContent) {
       formContent.style.pointerEvents = 'none';
-      formContent.style.opacity = '0.7'; // Sedikit transparan
     }
   }
+
+  // Mulai proses menunggu
+  waitForFormBridge();
 
 })();
