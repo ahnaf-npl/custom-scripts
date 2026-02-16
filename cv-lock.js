@@ -1,123 +1,97 @@
 (function() {
   "use strict";
 
-  // LOGGING: Mulai Script
-  console.log("[DEBUG-LOCK] Script mulai dijalankan...");
+  // Konfigurasi
+  const LOCK_FIELD_CODE = 'status_lock';
+  const LOCK_VALUE = 'LOCKED';
 
-  // Gunakan interval untuk mengecek apakah 'fb' sudah siap
-  // Cek setiap 200ms
-  var retryCount = 0;
-  var maxRetries = 50; // Stop setelah 10 detik (50 * 200ms)
+  // 1. Event saat Form Ditampilkan (form.show)
+  // Dokumentasi: formBridge.events.on('form.show', ...)
+  formBridge.events.on('form.show', function(context) {
+    
+    // Ambil data record menggunakan API terbaru
+    // Dokumentasi: formBridge.fn.getRecord()
+    const record = formBridge.fn.getRecord();
+    const lockStatus = record[LOCK_FIELD_CODE] ? record[LOCK_FIELD_CODE].value : '';
 
-  var checkInterval = setInterval(function() {
-    retryCount++;
-    console.log("[DEBUG-LOCK] Percobaan ke-" + retryCount + " mencari object 'fb'...");
+    // Sembunyikan field 'status_lock' itu sendiri agar tidak terlihat user
+    // Menggunakan class dari dokumentasi: fb-custom--field
+    const lockFieldEl = document.querySelector(`[data-field-code="${LOCK_FIELD_CODE}"]`);
+    if (lockFieldEl) {
+      lockFieldEl.style.display = 'none';
+    }
 
-    // PENTING: Pakai window.fb untuk menghindari ReferenceError
-    if (window.fb) {
-      console.log("[DEBUG-LOCK] BERHASIL! Object 'fb' ditemukan.");
+    // Cek Status
+    if (lockStatus === LOCK_VALUE) {
       
-      // Hentikan interval pengecekan
-      clearInterval(checkInterval);
+      // A. Tampilkan SweetAlert
+      // Kita beri sedikit delay agar library SweetAlert siap
+      setTimeout(function() {
+        if (typeof Swal !== 'undefined') {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Akses Terkunci',
+            text: 'Data CV Anda sudah divalidasi. Anda tidak dapat melakukan perubahan.',
+            allowOutsideClick: false,
+            confirmButtonText: 'OK',
+            confirmButtonColor: '#3085d6',
+          });
+        } else {
+          alert("DATA TERKUNCI: Data CV sudah divalidasi.");
+        }
+      }, 300);
+
+      // B. Matikan Interaksi Form (Disable UI)
+      disableFormUI();
+    }
+  });
+
+  // 2. Event Pencegah Submit (form.submit)
+  // Ini layer keamanan kedua: Jika user berhasil mengakal UI, tombol submit tetap tidak akan jalan.
+  // Dokumentasi: form.submit
+  formBridge.events.on('form.submit', function(context) {
+    const record = formBridge.fn.getRecord();
+    const lockStatus = record[LOCK_FIELD_CODE] ? record[LOCK_FIELD_CODE].value : '';
+
+    if (lockStatus === LOCK_VALUE) {
+      // Batalkan proses submit
+      // Dokumentasi: context.preventDefault()
+      context.preventDefault(); 
       
-      // Jalankan fungsi utama
-      initLockSystem();
-    } else {
-      console.warn("[DEBUG-LOCK] Object 'fb' belum ditemukan. Menunggu...");
-      
-      if (retryCount >= maxRetries) {
-        console.error("[DEBUG-LOCK] GAGAL TOTAL. 'fb' tidak ditemukan setelah 10 detik. Cek koneksi atau urutan load script.");
-        clearInterval(checkInterval);
+      if (typeof Swal !== 'undefined') {
+        Swal.fire('Gagal', 'Form terkunci, tidak bisa disimpan.', 'error');
+      } else {
+        alert('Form terkunci!');
       }
     }
-  }, 200);
+  });
 
+  // --- Fungsi Bantuan untuk Disable UI ---
+  function disableFormUI() {
+    // 1. Sembunyikan Tombol Submit
+    // Dokumentasi class: fb-custom--button--submit
+    const submitBtn = document.querySelector('.fb-custom--button--submit');
+    if (submitBtn) submitBtn.style.display = 'none';
 
-  // Fungsi Utama
-  function initLockSystem() {
-    try {
-      console.log("[DEBUG-LOCK] Mendaftarkan event listener fb.events.form.mounted...");
+    // 2. Sembunyikan Tombol Confirm (jika ada)
+    // Dokumentasi class: fb-custom--button--confirm
+    const confirmBtn = document.querySelector('.fb-custom--button--confirm');
+    if (confirmBtn) confirmBtn.style.display = 'none';
 
-      window.fb.events.form.mounted = [function(state) {
-        console.log("[DEBUG-LOCK] Event Form Mounted TRIGGERED!");
-        console.log("[DEBUG-LOCK] State Record saat ini:", state.record);
-
-        // --- KONFIGURASI ---
-        var fieldCode = 'status_lock'; 
-        var lockValue = 'LOCKED';
-        // -------------------
-
-        // Cek apakah field ada
-        if (!state.record[fieldCode]) {
-          console.error("[DEBUG-LOCK] Field '" + fieldCode + "' TIDAK DITEMUKAN di form ini. Pastikan field code benar dan field dimasukkan ke FormBridge.");
-          return state;
-        }
-
-        var currentStatus = state.record[fieldCode].value;
-        console.log("[DEBUG-LOCK] Value status saat ini: '" + currentStatus + "'");
-        console.log("[DEBUG-LOCK] Value yang dicari: '" + lockValue + "'");
-
-        if (currentStatus === lockValue) {
-          console.log("[DEBUG-LOCK] KONDISI MATCH! Memulai proses penguncian...");
-          
-          // 1. Alert
-          setTimeout(function() {
-            if (typeof Swal !== 'undefined') {
-              console.log("[DEBUG-LOCK] Menampilkan SweetAlert.");
-              Swal.fire({
-                icon: 'info',
-                title: 'Akses Terkunci',
-                text: 'Data CV Anda sudah terkunci.',
-                allowOutsideClick: false,
-                confirmButtonText: 'OK'
-              });
-            } else {
-              console.log("[DEBUG-LOCK] SweetAlert tidak load, pakai alert biasa.");
-              alert("DATA TERKUNCI");
-            }
-          }, 500);
-
-          // 2. Disable Form
-          disableFormElements();
-        } else {
-            console.log("[DEBUG-LOCK] Kondisi tidak match. Form tetap terbuka.");
-        }
-
-        return state;
-      }];
-      
-      console.log("[DEBUG-LOCK] Event listener berhasil didaftarkan.");
-
-    } catch (err) {
-      console.error("[DEBUG-LOCK] Error fatal di dalam initLockSystem:", err);
-    }
-  }
-
-  function disableFormElements() {
-    console.log("[DEBUG-LOCK] Menjalankan disableFormElements...");
-    
-    // Sembunyikan Submit
-    var submitBtns = document.querySelectorAll('.fb-submit, button[type="submit"]');
-    if(submitBtns.length > 0) {
-        console.log("[DEBUG-LOCK] Tombol submit ditemukan ("+submitBtns.length+"), disembunyikan.");
-        submitBtns.forEach(function(btn) { btn.style.display = 'none'; });
-    } else {
-        console.warn("[DEBUG-LOCK] Tombol submit TIDAK ditemukan.");
-    }
-
-    // Disable Input
-    var allInputs = document.querySelectorAll('input, select, textarea');
-    console.log("[DEBUG-LOCK] Mengunci " + allInputs.length + " elemen input.");
-    allInputs.forEach(function(el) {
+    // 3. Disable semua input fields
+    // Dokumentasi class: fb-custom--field
+    const inputs = document.querySelectorAll('.fb-custom--field input, .fb-custom--field select, .fb-custom--field textarea');
+    inputs.forEach(function(el) {
       el.disabled = true;
-      el.style.backgroundColor = "#e0e0e0";
+      el.style.backgroundColor = '#f3f4f6';
+      el.style.cursor = 'not-allowed';
     });
     
-    // Matikan pointer events
-    var content = document.querySelector('.fb-content');
-    if(content) {
-        content.style.pointerEvents = 'none';
-        console.log("[DEBUG-LOCK] Content pointer-events dimatikan.");
+    // 4. Disable pointer events pada area konten utama agar tidak bisa diklik
+    // Dokumentasi class: fb-custom--content
+    const contentArea = document.querySelector('.fb-custom--content');
+    if (contentArea) {
+        contentArea.style.pointerEvents = 'none';
     }
   }
 
