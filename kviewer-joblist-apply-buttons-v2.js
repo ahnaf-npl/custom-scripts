@@ -28,7 +28,6 @@
 
   const CONFIG = {
     name: "KViewer Job Apply Buttons",
-    version: "1.0.0",
     version: "1.1.0",
     debug: true,
 
@@ -62,8 +61,6 @@
 
   const IDS = {
     style: "kv-job-apply-style",
-    modal: "kv-job-apply-modal",
-    toast: "kv-job-apply-toast"
     modal: "kv-job-apply-modal"
   };
 
@@ -135,7 +132,6 @@
     if (!CONFIG.debug) return;
     console.log(
       "%c[" + CONFIG.name + "]",
-      "background:#0f766e;color:#fff;font-weight:700;padding:2px 7px;border-radius:4px",
       "background:#0079d2;color:#fff;font-weight:700;padding:2px 7px;border-radius:4px",
       ...args
     );
@@ -435,36 +431,19 @@
     const backElement = findBackElement();
     if (!backElement) return;
 
-    const backField = backElement.closest(".kv-detail-field") || backElement.parentElement;
-    const mount =
-      backField.querySelector(".kv-detail-field-value") ||
-      backElement.parentElement ||
-      backField;
     document.querySelectorAll(".kv-job-detail-toolbar [data-kv-job-action='apply']")
       .forEach((button, index) => {
         if (index > 0) button.remove();
       });
 
-    let toolbar = mount.querySelector(".kv-job-detail-toolbar");
-    if (!toolbar) {
-      toolbar = document.createElement("div");
-      toolbar.className = "kv-job-detail-toolbar";
     const mount = backElement.parentElement;
     if (!mount) return;
 
-      if (backElement.parentElement !== toolbar) {
-        toolbar.appendChild(backElement);
-      }
     mount.classList.add("kv-job-detail-toolbar");
 
-      mount.appendChild(toolbar);
-    }
-
-    let applyButton = toolbar.querySelector("[data-kv-job-action='apply']");
     let applyButton = mount.querySelector(":scope > [data-kv-job-action='apply']");
     if (!applyButton) {
       applyButton = createButton("DAFTAR", "primary");
-      toolbar.appendChild(applyButton);
       mount.appendChild(applyButton);
     }
 
@@ -505,7 +484,6 @@
   function findIndexActionMount(card) {
     if (card.matches("tr.kv-list-record")) {
       const dl = card.querySelector("td:first-child dl");
-      if (!dl) return null;
       if (!dl) {
         let actionCell = card.querySelector(":scope > td.kv-job-table-action-cell");
         if (!actionCell) {
@@ -723,7 +701,6 @@
   }
 
   function findBackElement() {
-    const links = Array.from(document.querySelectorAll("a, button, [role='button']"));
     const links = Array.from(document.querySelectorAll("a, button, [role='button']"))
       .filter((element) => !element.matches("[data-kv-job-action]"));
 
@@ -742,7 +719,6 @@
   function openApplyModal(jobCode) {
     const cleanJobCode = normalizeText(jobCode);
     if (!cleanJobCode) {
-      showToast("Job Code belum ditemukan.");
       log("Job Code belum ditemukan.");
       return;
     }
@@ -763,7 +739,6 @@
     closeButton.type = "button";
     closeButton.className = "kv-job-modal-close";
     closeButton.setAttribute("aria-label", "Tutup modal");
-    closeButton.textContent = "x";
     closeButton.textContent = "Tutup";
     closeButton.addEventListener("click", closeApplyModal);
 
@@ -774,13 +749,8 @@
     const intro = document.createElement("p");
     intro.className = "kv-job-modal-text";
     intro.textContent =
-      "Sebelum melanjutkan ke pendaftaran, pastikan kriteria job sudah sesuai dengan minat Kamu dan kandidat sudah memenuhi syarat job.";
       "Sebelum mendaftar, pastikan lowongan ini sesuai dengan minat kandidat dan kandidat sudah memenuhi kriteria yang diminta.";
 
-    const instruction = document.createElement("p");
-    instruction.className = "kv-job-modal-text";
-    instruction.textContent =
-      "Klik area Job Code untuk menyalin. Setelah itu klik tombol DAFTAR KE WHATSAPP, lalu kirim Job Code yang sudah terisi otomatis tanpa tambahan teks apapun.";
     const instructionTitle = document.createElement("div");
     instructionTitle.className = "kv-job-step-title";
     instructionTitle.textContent = "Langkah pendaftaran";
@@ -809,8 +779,6 @@
     const codeButton = document.createElement("button");
     codeButton.type = "button";
     codeButton.className = "kv-job-code-copy";
-    codeButton.textContent = cleanJobCode;
-    codeButton.addEventListener("click", () => copyJobCode(cleanJobCode));
     codeButton.innerHTML =
       '<span class="kv-job-code-value"></span><span class="kv-job-code-status">Klik untuk copy</span>';
     codeButton.querySelector(".kv-job-code-value").textContent = cleanJobCode;
@@ -846,7 +814,6 @@
 
     document.addEventListener("keydown", closeOnEscape);
     startWhatsappCountdown(whatsappButton, cleanJobCode);
-    closeButton.focus();
     window.requestAnimationFrame(() => {
       overlay.classList.add("kv-job-modal-visible");
       closeButton.focus();
@@ -884,7 +851,6 @@
   function closeApplyModal() {
     window.clearInterval(state.modalCountdownTimer);
     const modal = document.getElementById(IDS.modal);
-    if (modal) modal.remove();
     if (modal) {
       modal.classList.remove("kv-job-modal-visible");
       window.setTimeout(() => {
@@ -895,19 +861,15 @@
     document.removeEventListener("keydown", closeOnEscape);
   }
 
-  async function copyJobCode(jobCode) {
   async function copyJobCode(jobCode, button) {
     try {
       await navigator.clipboard.writeText(jobCode);
-      showToast("Job Code berhasil disalin.");
       setCopyStatus(button, "Job Code berhasil di-copy", true);
     } catch (error) {
-      fallbackCopy(jobCode);
       fallbackCopy(jobCode, button);
     }
   }
 
-  function fallbackCopy(text) {
   function fallbackCopy(text, button) {
     const input = document.createElement("textarea");
     input.value = text;
@@ -919,29 +881,17 @@
 
     try {
       document.execCommand("copy");
-      showToast("Job Code berhasil disalin.");
       setCopyStatus(button, "Job Code berhasil di-copy", true);
     } catch (error) {
-      showToast("Tidak bisa copy otomatis. Silakan copy manual.");
       setCopyStatus(button, "Copy gagal. Silakan blok kode ini manual.", false);
     }
 
     input.remove();
   }
 
-  function showToast(message) {
-    let toast = document.getElementById(IDS.toast);
-    if (!toast) {
-      toast = document.createElement("div");
-      toast.id = IDS.toast;
-      toast.className = "kv-job-toast";
-      document.body.appendChild(toast);
-    }
   function setCopyStatus(button, message, success) {
     if (!button) return;
 
-    toast.textContent = message;
-    toast.classList.add("kv-job-toast-show");
     const status = button.querySelector(".kv-job-code-status");
     if (!status) return;
 
@@ -950,8 +900,6 @@
     status.textContent = message;
 
     window.setTimeout(() => {
-      toast.classList.remove("kv-job-toast-show");
-    }, 2200);
       button.classList.remove("kv-job-code-copied", "kv-job-code-copy-failed");
       status.textContent = "Klik untuk copy";
     }, 2400);
@@ -1008,7 +956,6 @@
 
       .kv-job-button {
         appearance: none;
-        border: 0;
         border: 1px solid #cbd5e1;
         border-radius: 6px;
         min-height: 42px;
@@ -1018,7 +965,6 @@
         letter-spacing: 0;
         line-height: 1;
         cursor: pointer;
-        transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
         box-shadow: none;
         transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
       }
@@ -1036,26 +982,21 @@
       }
 
       .kv-job-button-primary {
-        background: #0f766e;
         background: #0079d2;
         border-color: #0079d2;
         color: #ffffff;
-        box-shadow: 0 8px 18px rgba(15, 118, 110, 0.2);
       }
 
       .kv-job-button-secondary {
         background: #ffffff;
         color: #111827;
-        border: 1px solid #d1d5db;
         border-color: #cbd5e1;
       }
 
       .kv-job-detail-toolbar {
         display: flex;
-        justify-content: space-between;
         justify-content: flex-start;
         align-items: center;
-        gap: 16px;
         gap: 12px;
         width: 100%;
         margin: 0;
@@ -1083,7 +1024,6 @@
         align-items: center;
         justify-content: center;
         padding: 18px;
-        background: rgba(17, 24, 39, 0.54);
         background: rgba(15, 23, 42, 0);
         opacity: 0;
         transition: opacity 180ms ease, background 180ms ease;
@@ -1096,15 +1036,12 @@
 
       .kv-job-modal-dialog {
         position: relative;
-        width: min(100%, 430px);
         width: min(100%, 460px);
         max-height: calc(100vh - 36px);
         overflow-y: auto;
         border-radius: 8px;
         background: #ffffff;
         color: #111827;
-        box-shadow: 0 24px 80px rgba(17, 24, 39, 0.28);
-        padding: 24px 18px 18px;
         box-shadow: 0 24px 80px rgba(17, 24, 39, 0.24);
         padding: 24px 20px 20px;
         transform: translateY(12px) scale(0.98);
@@ -1117,19 +1054,12 @@
 
       .kv-job-modal-close {
         position: absolute;
-        top: 10px;
-        right: 10px;
-        width: 34px;
         top: 12px;
         right: 12px;
         min-width: 64px;
         height: 34px;
-        border: 0;
         border: 1px solid #d1d5db;
         border-radius: 6px;
-        background: #f3f4f6;
-        color: #111827;
-        font-size: 18px;
         background: #ffffff;
         color: #374151;
         font-size: 13px;
@@ -1173,7 +1103,6 @@
       }
 
       .kv-job-code-label {
-        margin: 18px 0 7px;
         margin: 18px 0 4px;
         font-size: 12px;
         font-weight: 800;
@@ -1195,13 +1124,8 @@
         align-items: flex-start;
         gap: 6px;
         width: 100%;
-        border: 1px dashed #0f766e;
         border: 1px dashed #0079d2;
         border-radius: 6px;
-        background: #ecfdf5;
-        color: #064e3b;
-        padding: 14px 12px;
-        font-size: 20px;
         background: #eff6ff;
         color: #0f172a;
         padding: 14px;
@@ -1259,7 +1183,6 @@
         min-height: 46px;
         margin-top: 16px;
         border-radius: 6px;
-        background: #16a34a;
         background: #0079d2;
         color: #ffffff !important;
         font-size: 14px;
@@ -1273,29 +1196,6 @@
         background: #9ca3af;
         color: #ffffff !important;
         cursor: not-allowed;
-      }
-
-      .kv-job-toast {
-        position: fixed;
-        left: 50%;
-        bottom: 18px;
-        z-index: 2147483001;
-        transform: translate(-50%, 18px);
-        opacity: 0;
-        max-width: calc(100vw - 32px);
-        border-radius: 6px;
-        background: #111827;
-        color: #ffffff;
-        padding: 10px 14px;
-        font-size: 13px;
-        font-weight: 700;
-        text-align: center;
-        transition: opacity 160ms ease, transform 160ms ease;
-      }
-
-      .kv-job-toast-show {
-        opacity: 1;
-        transform: translate(-50%, 0);
       }
     `;
 
