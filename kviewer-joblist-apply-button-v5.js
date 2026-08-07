@@ -28,7 +28,7 @@
 
   const CONFIG = {
     name: "KViewer Job Apply Buttons",
-    version: "1.3.1",
+    version: "1.3.2",
     debug: false,
 
     host: "e-bridge-id.viewer.kintoneapp.com",
@@ -1124,8 +1124,8 @@
 
       tr.kv-list-record.kv-job-list-card-enhanced {
         display: block !important;
-        width: calc(100% - 16px) !important;
-        margin: 0 8px 14px !important;
+        width: calc(100% - 20px) !important;
+        margin: 10px 10px 16px !important;
         border: 1px solid #dbeafe !important;
         border-radius: 6px !important;
         background: #ffffff !important;
@@ -1140,8 +1140,11 @@
       }
 
       tr.kv-list-record.kv-job-list-card-enhanced > td:first-child dl {
-        padding-bottom: 0 !important;
+        padding: 14px 10px 0 !important;
       }
+
+      tr.kv-list-record.kv-job-list-card-enhanced > td:not(:first-child) {
+        display: none !important;
       }
 
       .kv-job-native-arrow-hidden {
