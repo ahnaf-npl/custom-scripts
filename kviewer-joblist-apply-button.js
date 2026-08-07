@@ -28,8 +28,8 @@
 
   const CONFIG = {
     name: "KViewer Job Apply Buttons",
-    version: "1.3.0",
-    debug: true,
+    version: "1.3.1",
+    debug: false,
 
     host: "e-bridge-id.viewer.kintoneapp.com",
     listPath: "/public/sswjoblist",
@@ -62,13 +62,15 @@
     },
 
     mutationDelay: 150,
-    periodicDelay: 1500,
+    periodicDelay: 0,
   };
 
   const IDS = {
     style: "kv-job-apply-style",
     modal: "kv-job-apply-modal",
   };
+
+  const INSTANCE_KEY = "__kvJobApplyButtonsInstance";
 
   const ATTR = {
     cardEnhanced: "data-kv-job-card-enhanced",
@@ -88,6 +90,25 @@
   if (!isTargetHost()) {
     return;
   }
+
+  if (
+    window[INSTANCE_KEY] &&
+    typeof window[INSTANCE_KEY].destroy === "function"
+  ) {
+    window[INSTANCE_KEY].destroy();
+  }
+
+  window[INSTANCE_KEY] = {
+    destroy() {
+      window.clearTimeout(state.renderTimer);
+      window.clearInterval(state.intervalId);
+      window.clearInterval(state.modalCountdownTimer);
+      if (state.observer) {
+        state.observer.disconnect();
+      }
+      document.removeEventListener("keydown", closeOnEscape);
+    },
+  };
 
   boot();
 
@@ -113,10 +134,12 @@
     installObserver();
     installGlobalClickGuard();
     scheduleRender("boot");
-    state.intervalId = window.setInterval(
-      () => scheduleRender("periodic"),
-      CONFIG.periodicDelay,
-    );
+    if (CONFIG.periodicDelay > 0) {
+      state.intervalId = window.setInterval(
+        () => scheduleRender("periodic"),
+        CONFIG.periodicDelay,
+      );
+    }
   }
 
   function isTargetHost() {
@@ -354,8 +377,6 @@
     state.observer.observe(document.body, {
       childList: true,
       subtree: true,
-      attributes: true,
-      attributeFilter: ["class", "style", "href"],
     });
   }
 
@@ -407,7 +428,9 @@
       enhanceIndexPage();
     }
 
-    log("render", reason);
+    if (CONFIG.debug && reason === "boot") {
+      log("render", reason);
+    }
   }
 
   function enhanceIndexPage() {
@@ -497,13 +520,16 @@
         field.querySelector("[data-kv-job-action]")
       ) {
         field.classList.remove("kv-job-empty-field-hidden");
+        field.style.removeProperty("display");
         return;
       }
 
       if (shouldHide && isEmptyDetailField(field)) {
         field.classList.add("kv-job-empty-field-hidden");
+        field.style.setProperty("display", "none", "important");
       } else {
         field.classList.remove("kv-job-empty-field-hidden");
+        field.style.removeProperty("display");
       }
     });
   }
@@ -586,6 +612,13 @@
 
         return actionCell;
       }
+
+      const table = card.closest("table");
+      const tbody = card.closest("tbody");
+      const firstCell = card.querySelector("td:first-child");
+      if (table) table.classList.add("kv-job-mobile-list-table");
+      if (tbody) tbody.classList.add("kv-job-mobile-list-body");
+      if (firstCell) firstCell.classList.add("kv-job-mobile-list-cell");
 
       let actionItem = dl.querySelector(".kv-job-list-action-dd");
       if (!actionItem) {
@@ -1058,43 +1091,56 @@
   }
 
   function installStyles() {
-    if (document.getElementById(IDS.style)) return;
+    let style = document.getElementById(IDS.style);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = IDS.style;
+      document.head.appendChild(style);
+    }
 
-    const style = document.createElement("style");
-    style.id = IDS.style;
     style.textContent = `
       .kv-job-card-actions {
-        display: grid;
+        display: grid !important;
         grid-template-columns: 1fr 1fr;
         gap: 10px;
-        margin: 16px 0 0;
-        padding: 14px 10px 0;
+        margin: 16px 0 0 !important;
+        padding: 14px 10px 16px !important;
         border-top: 1px solid #e5e7eb;
       }
 
       .kv-job-list-action-dd {
-        display: block;
-        margin: 0;
-        padding: 0 0 10px;
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      .kv-job-mobile-list-table,
+      .kv-job-mobile-list-body {
+        display: block !important;
+        width: 100% !important;
+        border-collapse: separate !important;
+        border-spacing: 0 12px !important;
       }
 
       tr.kv-list-record.kv-job-list-card-enhanced {
-        display: block;
-        margin: 0 0 12px;
-        border: 1px solid #dbeafe;
-        border-radius: 6px;
-        background: #ffffff;
-        overflow: hidden;
+        display: block !important;
+        width: calc(100% - 16px) !important;
+        margin: 0 8px 14px !important;
+        border: 1px solid #dbeafe !important;
+        border-radius: 6px !important;
+        background: #ffffff !important;
+        overflow: hidden !important;
       }
 
       tr.kv-list-record.kv-job-list-card-enhanced > td:first-child {
-        display: block;
-        width: 100%;
+        display: block !important;
+        width: 100% !important;
         border: 0 !important;
+        box-sizing: border-box !important;
       }
 
       tr.kv-list-record.kv-job-list-card-enhanced > td:first-child dl {
-        padding-bottom: 0;
+        padding-bottom: 0 !important;
       }
       }
 
@@ -1413,6 +1459,5 @@
       }
     `;
 
-    document.head.appendChild(style);
   }
 })();
