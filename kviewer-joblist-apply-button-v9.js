@@ -28,7 +28,7 @@
 
   const CONFIG = {
     name: "KViewer Job Apply Buttons",
-    version: "1.4.2",
+    version: "1.4.3",
     debug: false,
 
     host: "e-bridge-id.viewer.kintoneapp.com",
@@ -498,6 +498,7 @@
 
     const backElement = findBackElement(detailRoot);
     if (!backElement) return;
+    enhanceBackControl(backElement);
 
     document
       .querySelectorAll(".kv-job-detail-toolbar [data-kv-job-action='apply']")
@@ -509,6 +510,7 @@
     if (!mount) return;
 
     mount.classList.add("kv-job-detail-toolbar");
+    mount.classList.toggle("kv-job-detail-toolbar-has-pdf", Boolean(pdfUrl));
 
     let applyButton = mount.querySelector(
       ":scope > [data-kv-job-action='apply']",
@@ -527,7 +529,7 @@
 
     if (pdfUrl) {
       if (!pdfButton) {
-        pdfButton = createButton("DOWNLOAD PDF", "secondary");
+        pdfButton = createButton("DOWNLOAD PDF", "secondary", "download");
         pdfButton.classList.add("kv-job-download-pdf-button");
         mount.insertBefore(pdfButton, applyButton);
       }
@@ -619,9 +621,7 @@
     if (!rawJobId) return;
 
     const jobCode = makeJobCode(rawJobId);
-    const target =
-      valueElement.querySelector("div, span, p") ||
-      valueElement;
+    const target = valueElement.querySelector("div, span, p") || valueElement;
 
     if (normalizeText(target.textContent) === jobCode) return;
 
@@ -638,10 +638,7 @@
       '.kv-detail-field-value[data-field-code="' + cssEscape(fieldCode) + '"]',
     ].join(", ");
 
-    if (
-      root.matches &&
-      root.matches(valueSelector)
-    ) {
+    if (root.matches && root.matches(valueSelector)) {
       return root;
     }
 
@@ -655,7 +652,9 @@
       return root;
     }
 
-    return root.querySelector('[data-field-code="' + cssEscape(fieldCode) + '"]');
+    return root.querySelector(
+      '[data-field-code="' + cssEscape(fieldCode) + '"]',
+    );
   }
 
   function getFieldValueElement(field) {
@@ -703,9 +702,7 @@
 
     candidates.push(valueElement.innerText, valueElement.textContent);
 
-    return candidates
-      .flatMap(extractHttpUrls)
-      .find(isGoogleDriveUrl) || "";
+    return candidates.flatMap(extractHttpUrls).find(isGoogleDriveUrl) || "";
   }
 
   function extractHttpUrls(value) {
@@ -739,13 +736,12 @@
   }
 
   function cleanupLooseActionButtons(detailRoot) {
-    const allowedSelectors = [
-      ".kv-job-detail-toolbar",
-      "#" + IDS.modal,
-    ];
+    const allowedSelectors = [".kv-job-detail-toolbar", "#" + IDS.modal];
 
     detailRoot
-      .querySelectorAll("[data-kv-job-action='detail'], [data-kv-job-action='apply']")
+      .querySelectorAll(
+        "[data-kv-job-action='detail'], [data-kv-job-action='apply']",
+      )
       .forEach((button) => {
         const isAllowed = allowedSelectors.some((selector) => {
           return Boolean(button.closest(selector));
@@ -989,12 +985,83 @@
     return CONFIG.jobPrefix + clean;
   }
 
-  function createButton(label, variant) {
+  function createButton(label, variant, iconName) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "kv-job-button kv-job-button-" + variant;
-    button.textContent = label;
+    button.innerHTML =
+      '<span class="kv-job-button-content">' +
+      getActionIcon(iconName || getButtonIconName(label)) +
+      '<span class="kv-job-button-label"></span>' +
+      "</span>";
+    button.querySelector(".kv-job-button-label").textContent = label;
     return button;
+  }
+
+  function getButtonIconName(label) {
+    const text = normalizeText(label).toUpperCase();
+    if (text === "DETAIL") return "detail";
+    if (text.includes("DOWNLOAD")) return "download";
+    if (text.includes("DAFTAR")) return "send";
+    return "";
+  }
+
+  function getActionIcon(name) {
+    const attrs =
+      'xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+
+    if (name === "back") {
+      return (
+        "<svg " +
+        attrs +
+        '><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>'
+      );
+    }
+
+    if (name === "detail") {
+      return (
+        "<svg " +
+        attrs +
+        '><path d="M2.1 12s3.5-7 9.9-7 9.9 7 9.9 7-3.5 7-9.9 7-9.9-7-9.9-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+      );
+    }
+
+    if (name === "download") {
+      return (
+        "<svg " +
+        attrs +
+        '><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>'
+      );
+    }
+
+    if (name === "send") {
+      return (
+        "<svg " +
+        attrs +
+        '><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>'
+      );
+    }
+
+    return "";
+  }
+
+  function enhanceBackControl(backElement) {
+    backElement.classList.add("kv-job-back-button");
+    backElement.classList.remove("underline");
+
+    if (backElement.getAttribute("data-kv-job-back-enhanced") === "true") {
+      return;
+    }
+
+    const label =
+      normalizeText(backElement.innerText || backElement.textContent) ||
+      "Kembali";
+    backElement.innerHTML =
+      getActionIcon("back") +
+      '<span class="kv-job-back-label"></span>';
+    backElement.querySelector(".kv-job-back-label").textContent = label;
+    backElement.setAttribute("data-kv-job-back-enhanced", "true");
+    backElement.setAttribute("aria-label", label);
   }
 
   function goToDetail(button) {
@@ -1042,8 +1109,10 @@
 
     if (!fileId) return url;
 
-    return "https://drive.google.com/uc?export=download&id=" +
-      encodeURIComponent(fileId);
+    return (
+      "https://drive.google.com/uc?export=download&id=" +
+      encodeURIComponent(fileId)
+    );
   }
 
   function findDetailLink(root) {
@@ -1410,6 +1479,9 @@
         appearance: none;
         border: 1px solid #cbd5e1;
         border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         min-height: 42px;
         padding: 10px 12px;
         font-size: 13px;
@@ -1421,6 +1493,27 @@
         transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
       }
 
+      .kv-job-button-content,
+      .kv-job-back-button {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-width: 0;
+      }
+
+      .kv-job-button svg,
+      .kv-job-back-button svg {
+        flex: 0 0 auto;
+      }
+
+      .kv-job-button-label,
+      .kv-job-back-label {
+        min-width: 0;
+        overflow-wrap: normal;
+        white-space: nowrap;
+      }
+
       .kv-job-button:hover {
         border-color: #0079d2;
       }
@@ -1430,6 +1523,7 @@
       }
 
       .kv-job-button:focus-visible,
+      .kv-job-back-button:focus-visible,
       .kv-job-code-copy:focus-visible,
       .kv-job-modal-close:focus-visible,
       .kv-job-whatsapp-button:focus-visible {
@@ -1473,18 +1567,87 @@
         margin: 0 !important;
       }
 
+      .kv-job-back-button {
+        min-height: 42px;
+        padding: 10px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #0079d2 !important;
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1 !important;
+        text-decoration: none !important;
+        box-sizing: border-box;
+        transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
+      }
+
+      .kv-job-back-button:hover {
+        background: #eff6ff;
+        border-color: #0079d2;
+        color: #005ea8 !important;
+      }
+
+      .kv-job-back-button:active {
+        transform: translateY(1px);
+      }
+
       .kv-job-detail-toolbar .kv-job-button {
         min-width: 118px;
+        margin-left: 0;
+      }
+
+      .kv-job-detail-toolbar .kv-job-back-button ~ .kv-job-button-primary {
         margin-left: auto;
       }
 
       .kv-job-detail-toolbar .kv-job-download-pdf-button {
-        min-width: 136px;
+        min-width: 148px;
         margin-left: auto;
       }
 
       .kv-job-detail-toolbar .kv-job-download-pdf-button + .kv-job-button {
         margin-left: 0;
+      }
+
+      @media (max-width: 520px) {
+        .kv-job-detail-toolbar {
+          display: grid !important;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+          align-items: stretch;
+        }
+
+        .kv-job-detail-toolbar.kv-job-detail-toolbar-has-pdf {
+          grid-template-columns: minmax(74px, 0.82fr) minmax(124px, 1.35fr) minmax(96px, 1fr);
+        }
+
+        .kv-job-detail-toolbar .kv-job-back-button,
+        .kv-job-detail-toolbar .kv-job-button {
+          width: 100%;
+          min-width: 0;
+          min-height: 44px;
+          padding: 10px 8px;
+          font-size: 12px;
+          line-height: 1;
+        }
+
+        .kv-job-detail-toolbar .kv-job-back-button ~ .kv-job-button-primary,
+        .kv-job-detail-toolbar .kv-job-download-pdf-button,
+        .kv-job-detail-toolbar .kv-job-download-pdf-button + .kv-job-button {
+          margin-left: 0;
+        }
+
+        .kv-job-detail-toolbar .kv-job-button-content,
+        .kv-job-detail-toolbar .kv-job-back-button {
+          gap: 5px;
+        }
+
+        .kv-job-detail-toolbar .kv-job-button svg,
+        .kv-job-detail-toolbar .kv-job-back-button svg {
+          width: 15px;
+          height: 15px;
+        }
       }
 
       .kv-job-modal-open {
@@ -1709,6 +1872,5 @@
         cursor: not-allowed;
       }
     `;
-
   }
 })();
