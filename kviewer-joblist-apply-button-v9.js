@@ -28,7 +28,7 @@
 
   const CONFIG = {
     name: "KViewer Job Apply Buttons",
-    version: "1.4.1",
+    version: "1.4.2",
     debug: false,
 
     host: "e-bridge-id.viewer.kintoneapp.com",
@@ -687,20 +687,54 @@
   }
 
   function findPdfDownloadUrl(root) {
-    return extractFirstHttpUrl(findFieldValueByCode(root, CONFIG.pdfUrlFieldCode));
+    const field = findFieldElementByCode(root, CONFIG.pdfUrlFieldCode);
+    if (!field) return "";
+
+    const valueElement = getFieldValueElement(field) || field;
+    const candidates = [];
+
+    if (field.matches("input, textarea, select")) {
+      candidates.push(field.value);
+    }
+
+    valueElement.querySelectorAll("a[href]").forEach((link) => {
+      candidates.push(link.getAttribute("href"), link.href);
+    });
+
+    candidates.push(valueElement.innerText, valueElement.textContent);
+
+    return candidates
+      .flatMap(extractHttpUrls)
+      .find(isGoogleDriveUrl) || "";
   }
 
-  function extractFirstHttpUrl(value) {
+  function extractHttpUrls(value) {
     const text = normalizeText(value);
-    if (!text) return "";
+    if (!text) return [];
 
-    const match = text.match(/https?:\/\/[^\s"'<>]+/i);
-    if (!match) return "";
+    return (text.match(/https?:\/\/[^\s"'<>]+/gi) || []).map((url) => {
+      try {
+        return new URL(url).href;
+      } catch (error) {
+        return url;
+      }
+    });
+  }
 
+  function extractFirstGoogleDriveUrl(value) {
+    return extractHttpUrls(value).find(isGoogleDriveUrl) || "";
+  }
+
+  function isGoogleDriveUrl(url) {
     try {
-      return new URL(match[0]).href;
+      const hostname = new URL(url).hostname.toLowerCase();
+      return [
+        "drive.google.com",
+        "docs.google.com",
+        "drive.usercontent.google.com",
+      ].includes(hostname);
     } catch (error) {
-      return match[0];
+      return false;
     }
   }
 
@@ -987,7 +1021,7 @@
   }
 
   function downloadPdf(rawUrl) {
-    const url = extractFirstHttpUrl(rawUrl);
+    const url = extractFirstGoogleDriveUrl(rawUrl);
     if (!url) return;
 
     const downloadUrl = toGoogleDriveDownloadUrl(url);
