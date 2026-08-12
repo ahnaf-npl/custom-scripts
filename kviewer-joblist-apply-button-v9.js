@@ -28,7 +28,7 @@
 
   const CONFIG = {
     name: "KViewer Job Apply Buttons",
-    version: "1.4.3",
+    version: "1.4.4",
     debug: false,
 
     host: "e-bridge-id.viewer.kintoneapp.com",
@@ -1619,7 +1619,11 @@
         }
 
         .kv-job-detail-toolbar.kv-job-detail-toolbar-has-pdf {
-          grid-template-columns: minmax(74px, 0.82fr) minmax(124px, 1.35fr) minmax(96px, 1fr);
+          grid-template-columns: minmax(90px, 0.82fr) minmax(150px, 1.35fr);
+        }
+
+        .kv-job-detail-toolbar.kv-job-detail-toolbar-has-pdf .kv-job-button-primary {
+          grid-column: 1 / -1;
         }
 
         .kv-job-detail-toolbar .kv-job-back-button,
