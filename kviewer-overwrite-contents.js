@@ -19,8 +19,12 @@
 
   const CONFIG = {
     name: "FB Indonesian Translator",
-    version: "1.1.0",
+    version: "1.1.1",
     debug: false,
+    allowedHosts: [
+      "formbridge.kintoneapp.com",
+      "e-bridge-id.form.kintoneapp.com"
+    ],
     mutationDelay: 24,
     periodicDelay: 1500,
     bootDelays: [0, 250, 750, 1500, 3000],
@@ -92,7 +96,7 @@
       "options": {
         "養殖業": {
           "translation": "Budidaya Perikanan",
-          "originalValue": "養殖業"
+          "originalValue": "on"
         }
       }
     },
@@ -537,7 +541,7 @@
   };
 
   function isAllowedPage() {
-    return location.hostname === "formbridge.kintoneapp.com";
+    return CONFIG.allowedHosts.includes(location.hostname);
   }
 
   if (!isAllowedPage()) {
