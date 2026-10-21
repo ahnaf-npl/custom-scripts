@@ -7,8 +7,8 @@
   // =========================================================
   const CONFIG = {
     // Field code subtable dan kolom hubungan
-    tableCode: 'family_table',
-    relationCode: 'hubungan',
+    tableCode: '家族',
+    relationCode: '家族_続柄',
 
     // Value ASLI Jepang, bukan label terjemahan
     defaults: ['父', '母', '兄', '妹'],
