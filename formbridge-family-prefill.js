@@ -2,16 +2,17 @@
 (() => {
   'use strict';
 
-  // ======================================================
+  // =========================================================
   // CONFIG
-  // ======================================================
+  // =========================================================
   const CONFIG = {
     tableCode: '家族',
     relationCode: '家族_続柄',
 
     defaults: ['父', '母', '兄', '妹'],
 
-    // Script hanya aktif jika URL memiliki ?family_init=1
+    // Only initialize on URLs with ?family_init=1
+    // Do not add this parameter to edit form URLs.
     createParam: 'family_init',
 
     buttonLabel: 'Tambah anggota keluarga',
@@ -21,41 +22,55 @@
 
   const PREFIX = '[FamilyTable]';
   const TABLE = CONFIG.tableCode;
-  const FIELD = CONFIG.relationCode;
+  const RELATION = CONFIG.relationCode;
   const PRESETS = CONFIG.defaults;
 
   const log = (...args) => {
     if (CONFIG.debug) console.log(PREFIX, ...args);
   };
 
-  // ======================================================
-  // CREATE-ONLY PROTECTION
-  // ======================================================
-
+  // =========================================================
+  // CREATE FORM GUARD
+  // =========================================================
   const params = new URLSearchParams(window.location.search);
 
   if (params.get(CONFIG.createParam) !== '1') {
-    log('Customization disabled: not a create-prefill URL.');
+    log('Disabled: create parameter not present.');
     return;
   }
 
   if (!window.formBridge?.events?.on) {
-    console.error(PREFIX, 'FormBridge V2 API unavailable.');
+    console.error(PREFIX, 'FormBridge V2 API unavailable');
     return;
   }
 
   let initialized = false;
-  let initializationAllowed = false;
-  let pendingRowIndex = null;
+  let initializing = false;
+  let autoAddingIndex = null;
   let observer = null;
-  let decorating = false;
+  let decorationScheduled = false;
 
-  // ======================================================
-  // RECORD HELPERS
-  // ======================================================
-
+  // =========================================================
+  // HELPERS
+  // =========================================================
   function getRows() {
-    return formBridge.fn.getRecord()?.[TABLE]?.value ?? [];
+    return formBridge.fn.getRecord()?.[TABLE]?.value || [];
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function waitUntil(predicate, timeout = 3000) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeout) {
+      const result = predicate();
+      if (result) return result;
+      await sleep(80);
+    }
+
+    return null;
   }
 
   function isFilled(value) {
@@ -80,47 +95,46 @@
     );
   }
 
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
+  // =========================================================
+  // DETECT NATIVE ADD-ROW BUTTON
+  // =========================================================
 
-  async function waitUntil(fn, timeout = 4000) {
-    const start = Date.now();
-
-    while (Date.now() - start < timeout) {
-      const result = fn();
-      if (result) return result;
-      await sleep(80);
-    }
-
-    return null;
-  }
-
-  // ======================================================
-  // FIND NATIVE ADD-ROW BUTTON
-  // ======================================================
+  // Match the actual Material Design plus-circle path.
+  // This intentionally avoids the minus-circle button.
+  const PLUS_PATH =
+    'm511h-4v4h-2v-4H7v-2h4V7h2v4h4z';
 
   function isNativeAddButton(button) {
     const paths = button.querySelectorAll('svg path[d]');
 
     return [...paths].some(path => {
-      const d = path.getAttribute('d') || '';
-      return d.includes('M12 2C6.48');
+      const d = (path.getAttribute('d') || '')
+        .replace(/\s+/g, '');
+
+      return d.includes(PLUS_PATH);
     });
   }
 
   function getAddButton() {
-    const buttons = [
-      ...document.querySelectorAll('button')
+    // First: exact structure from the user's FormBridge HTML
+    const primary = [
+      ...document.querySelectorAll(
+        'div.flex.justify-center.pl-10 > button[type="button"]'
+      )
     ].filter(isNativeAddButton);
 
-    if (!buttons.length) return null;
+    const candidates = primary.length
+      ? primary
+      : [...document.querySelectorAll(
+          'button[type="button"]'
+        )].filter(isNativeAddButton);
 
-    // Find anchors belonging to the target table
+    if (!candidates.length) return null;
+    if (candidates.length === 1) return candidates[0];
+
+    // Multiple subtables:
+    // Try to find the button belonging to 家族.
     const anchor =
-      document.querySelector(
-        `.fb-custom--row[data-table-code="${TABLE}"]`
-      ) ||
       document.querySelector(
         `[data-table-code="${TABLE}"]`
       ) ||
@@ -128,98 +142,138 @@
         `.fb-custom--field[data-field-code="${TABLE}"]`
       );
 
-    // Prefer a plus button inside the table's own container
     if (anchor) {
       let parent = anchor.parentElement;
 
       while (parent && parent !== document.body) {
-        const matches = buttons.filter(btn =>
-          parent.contains(btn)
+        const matches = candidates.filter(button =>
+          parent.contains(button)
         );
 
         if (matches.length === 1) {
           return matches[0];
         }
 
-        if (matches.length > 1) {
-          return null;
-        }
-
         parent = parent.parentElement;
       }
     }
 
-    // Safe fallback: only when exactly one plus button exists
-    if (buttons.length === 1) {
-      return buttons[0];
-    }
-
+    // Fail safely rather than altering another subtable
     return null;
   }
 
-  // ======================================================
-  // BUTTON APPEARANCE
-  // ======================================================
-
-  function addStyles() {
-    if (document.getElementById('family-table-css')) return;
+  // =========================================================
+  // BUTTON STYLING
+  // =========================================================
+  function injectStyles() {
+    if (document.getElementById('fb-family-style')) return;
 
     const style = document.createElement('style');
-    style.id = 'family-table-css';
+    style.id = 'fb-family-style';
 
     style.textContent = `
-      .family-add-button {
+      /* Add button wrapper */
+      .fb-family-add-wrap {
+        padding-left: 0 !important;
+        display: flex !important;
+        justify-content: center !important;
+        width: 100% !important;
+        margin-top: 14px !important;
+        margin-bottom: 10px !important;
+      }
+
+      /* Native add button */
+      button.fb-family-add-button {
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
         gap: 9px !important;
-        padding: 11px 20px !important;
+
+        width: auto !important;
+        min-width: 230px !important;
         min-height: 46px !important;
-        border: 1px dashed #93b4ed !important;
+
+        padding: 11px 20px !important;
+
+        background: #f3f8ff !important;
+        border: 1.5px dashed #91b7f1 !important;
         border-radius: 10px !important;
-        background: #f4f8ff !important;
+
         color: #2563eb !important;
+        font-family: inherit !important;
         font-size: 14px !important;
         font-weight: 600 !important;
+        line-height: 1.4 !important;
+
+        box-shadow: none !important;
         cursor: pointer !important;
-        transition: all 0.2s ease !important;
+
+        transition:
+          background-color 0.2s ease,
+          border-color 0.2s ease,
+          box-shadow 0.2s ease,
+          transform 0.2s ease !important;
       }
 
-      .family-add-button:hover {
-        background: #e8f1ff !important;
-        border-color: #2563eb !important;
-      }
-
-      .family-add-button:focus-visible {
-        outline: 2px solid #2563eb !important;
-        outline-offset: 3px !important;
-      }
-
-      .family-add-button svg {
+      /* Plus icon */
+      button.fb-family-add-button svg {
         width: 20px !important;
         height: 20px !important;
         color: #2563eb !important;
         flex-shrink: 0 !important;
       }
 
-      .family-add-label {
+      /* Text label - CSS only, no React DOM modification */
+      button.fb-family-add-button::after {
+        content: "Tambah anggota keluarga";
+        display: inline-block;
+        color: #2563eb;
         font-size: 14px;
+        font-weight: 600;
         line-height: 1.4;
         white-space: nowrap;
         pointer-events: none;
       }
 
-      .family-add-button-wrap {
-        padding-left: 0 !important;
-        margin-top: 12px !important;
-        margin-bottom: 8px !important;
-        justify-content: center !important;
+      /* Hover */
+      button.fb-family-add-button:hover {
+        background: #e5f0ff !important;
+        border-color: #2563eb !important;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08)
+          !important;
       }
 
+      /* Active */
+      button.fb-family-add-button:active {
+        transform: scale(0.98) !important;
+        background: #dbeafe !important;
+      }
+
+      /* Keyboard focus */
+      button.fb-family-add-button:focus-visible {
+        outline: 2px solid #2563eb !important;
+        outline-offset: 3px !important;
+      }
+
+      /* Disabled */
+      button.fb-family-add-button:disabled {
+        opacity: 0.5 !important;
+        cursor: not-allowed !important;
+      }
+
+      /* Mobile */
       @media (max-width: 480px) {
-        .family-add-button {
+        button.fb-family-add-button {
           width: 100% !important;
-          max-width: 300px !important;
+          max-width: 320px !important;
+          min-width: 0 !important;
+        }
+      }
+
+      /* Reduced motion */
+      @media (prefers-reduced-motion: reduce) {
+        button.fb-family-add-button {
+          transition: none !important;
         }
       }
     `;
@@ -227,46 +281,54 @@
     document.head.appendChild(style);
   }
 
-  function decorateButton() {
+  // =========================================================
+  // DECORATE BUTTON
+  // =========================================================
+  function decorateAddButton() {
     const button = getAddButton();
 
-    if (!button) return;
+    if (!button) return false;
 
-    button.classList.add('family-add-button');
-    button.parentElement?.classList.add(
-      'family-add-button-wrap'
-    );
+    button.classList.add('fb-family-add-button');
 
-    button.setAttribute('aria-label', CONFIG.buttonLabel);
-    button.setAttribute('title', CONFIG.buttonLabel);
-
-    let label = button.querySelector('.family-add-label');
-
-    if (!label) {
-      label = document.createElement('span');
-      label.className = 'family-add-label';
-      button.appendChild(label);
+    if (
+      button.getAttribute('aria-label') !==
+      CONFIG.buttonLabel
+    ) {
+      button.setAttribute(
+        'aria-label',
+        CONFIG.buttonLabel
+      );
     }
 
-    if (label.textContent !== CONFIG.buttonLabel) {
-      label.textContent = CONFIG.buttonLabel;
+    const wrapper = button.parentElement;
+
+    if (wrapper) {
+      wrapper.classList.add('fb-family-add-wrap');
     }
+
+    return true;
   }
 
   function scheduleDecorate() {
-    if (decorating) return;
-    decorating = true;
+    if (decorationScheduled) return;
+
+    decorationScheduled = true;
 
     requestAnimationFrame(() => {
-      decorating = false;
-      decorateButton();
+      decorationScheduled = false;
+      decorateAddButton();
     });
   }
 
-  function startObserver() {
+  // FormBridge uses React.
+  // Button nodes may be recreated after subtable changes.
+  function observeButton() {
     if (observer || !document.body) return;
 
-    observer = new MutationObserver(scheduleDecorate);
+    observer = new MutationObserver(() => {
+      scheduleDecorate();
+    });
 
     observer.observe(document.body, {
       childList: true,
@@ -274,62 +336,64 @@
     });
   }
 
-  // ======================================================
-  // PREFILL EXISTING EMPTY ROWS
-  // ======================================================
-
-  function fillRows(context) {
+  // =========================================================
+  // PREFILL EXISTING ROWS
+  // =========================================================
+  function fillExistingRows(context) {
     const rows = getRows();
 
-    for (let i = 0; i < Math.min(rows.length, PRESETS.length); i++) {
-      const field = rows[i]?.value?.[FIELD];
+    rows.slice(0, PRESETS.length).forEach((row, index) => {
+      const field = row?.value?.[RELATION];
 
-      if (!field || isFilled(field.value)) continue;
+      if (!field) return;
+
+      // Never overwrite existing values
+      if (isFilled(field.value)) return;
 
       try {
         context.setSubtableFieldValue(
           TABLE,
-          FIELD,
-          i,
-          PRESETS[i]
+          RELATION,
+          index,
+          PRESETS[index]
         );
 
-        log(`Prefilled row ${i + 1}: ${PRESETS[i]}`);
+        log(`Row ${index + 1}: ${PRESETS[index]}`);
       } catch (error) {
-        console.error(
+        console.warn(
           PREFIX,
-          `Could not prefill row ${i + 1}`,
+          `Failed to prefill row ${index + 1}`,
           error
         );
       }
-    }
+    });
   }
 
-  // ======================================================
-  // ADD MISSING ROWS
-  // ======================================================
+  // =========================================================
+  // ENSURE MINIMUM FOUR ROWS
+  // =========================================================
+  async function ensureMinimumRows(context) {
+    await sleep(150);
 
-  async function ensureRows() {
     for (let attempt = 0; attempt < PRESETS.length; attempt++) {
       const count = getRows().length;
 
-      if (count >= PRESETS.length) {
-        log('Minimum row count reached:', count);
-        return;
-      }
+      if (count >= PRESETS.length) break;
 
-      const button = await waitUntil(getAddButton, 4000);
+      const button = await waitUntil(
+        () => getAddButton(),
+        4000
+      );
 
       if (!button) {
         console.warn(
           PREFIX,
-          'Could not identify the native add-row button. ' +
-          'No further changes will be made.'
+          'Native add button not found.'
         );
-        return;
+        break;
       }
 
-      pendingRowIndex = count;
+      autoAddingIndex = count;
 
       try {
         button.click();
@@ -342,60 +406,34 @@
         if (!added) {
           console.warn(
             PREFIX,
-            'Row addition was not confirmed.'
+            'New row was not confirmed.'
           );
-          return;
+          break;
         }
 
         log(`Added row ${count + 1}`);
       } catch (error) {
-        console.error(PREFIX, 'Add-row error:', error);
-        return;
+        console.error(PREFIX, 'Add row failed', error);
+        break;
       } finally {
-        pendingRowIndex = null;
+        autoAddingIndex = null;
       }
     }
+
+    // Fill remaining empty rows with original JP values
+    fillExistingRows(context);
+
+    // Apply styling after the table is ready
+    scheduleDecorate();
+
+    initializing = false;
+
+    log('Initialization finished', getRows().length);
   }
 
-  // ======================================================
-  // ADD ROW EVENT
-  // ======================================================
-
-  formBridge.events.on(
-    `form.subtable.addRow.${TABLE}`,
-    (context) => {
-      if (!initializationAllowed) return;
-
-      if (
-        pendingRowIndex === null ||
-        pendingRowIndex >= PRESETS.length
-      ) {
-        return;
-      }
-
-      const field = context.newRow?.value?.[FIELD];
-
-      if (!field) {
-        console.warn(PREFIX, 'New row relation field missing.');
-        return;
-      }
-
-      // Set the ORIGINAL Japanese value
-      if (!isFilled(field.value)) {
-        field.value = PRESETS[pendingRowIndex];
-
-        log(
-          `New row ${pendingRowIndex + 1}:`,
-          PRESETS[pendingRowIndex]
-        );
-      }
-    }
-  );
-
-  // ======================================================
-  // FORM SHOW
-  // ======================================================
-
+  // =========================================================
+  // FORM SHOW EVENT
+  // =========================================================
   formBridge.events.on('form.show', (context) => {
     if (initialized) return;
     initialized = true;
@@ -403,33 +441,66 @@
     const rows = getRows();
 
     if (!rows.length) {
-      console.warn(PREFIX, 'Family table not found.');
+      console.warn(PREFIX, 'Subtable not available.');
       return;
     }
 
-    // Critical safety check:
-    // Never alter a subtable containing existing data.
+    // Avoid changing existing records or populated tables
     if (hasExistingData(rows)) {
-      log('Existing family data detected. Skipping.');
+      log('Existing data detected. Prefill skipped.');
       return;
     }
 
-    initializationAllowed = true;
+    initializing = true;
 
-    addStyles();
-    startObserver();
+    injectStyles();
+    observeButton();
     scheduleDecorate();
 
-    // Fill rows that already exist in FormBridge
-    fillRows(context);
+    // Set values for rows already rendered
+    fillExistingRows(context);
 
-    // Add missing rows through the original FormBridge button
-    void ensureRows().finally(() => {
-      initializationAllowed = false;
-      scheduleDecorate();
-
-      log('Final row count:', getRows().length);
-    });
+    // Add missing rows if needed
+    void ensureMinimumRows(context);
   });
+
+  // =========================================================
+  // SUBTABLE ADD ROW EVENT
+  // =========================================================
+  formBridge.events.on(
+    `form.subtable.addRow.${TABLE}`,
+    (context) => {
+      // Only automatically fill rows during initialization
+      if (
+        initializing &&
+        autoAddingIndex !== null &&
+        autoAddingIndex < PRESETS.length
+      ) {
+        const field =
+          context.newRow?.value?.[RELATION];
+
+        if (field && !isFilled(field.value)) {
+          field.value = PRESETS[autoAddingIndex];
+
+          log(
+            `New row ${autoAddingIndex + 1}:`,
+            PRESETS[autoAddingIndex]
+          );
+        }
+      }
+
+      scheduleDecorate();
+    }
+  );
+
+  // =========================================================
+  // SUBTABLE REMOVE ROW EVENT
+  // =========================================================
+  formBridge.events.on(
+    `form.subtable.removeRow.${TABLE}`,
+    () => {
+      scheduleDecorate();
+    }
+  );
 
 })();
