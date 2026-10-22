@@ -1,22 +1,19 @@
 
 /**
  * ============================================================
- * KViewer Job Apply Buttons v1.5.0
+ * KViewer Job Apply Buttons v1.5.1
  * ============================================================
  *
- * Features:
- * - DETAIL dan DAFTAR pada halaman daftar lowongan
- * - DAFTAR pada halaman detail
- * - Download PDF dari Google Drive
- * - Job Code otomatis: JOB- + 求人票ID
+ * - DETAIL / DAFTAR per record lowongan
+ * - WhatsApp, Telegram, atau keduanya
+ * - Telegram deep link dengan parameter /start
+ * - Job Code: JOB- + 求人票ID
  * - Copy Job Code
- * - Pendaftaran melalui WhatsApp / Telegram / keduanya
- * - Instruksi modal dinamis sesuai channel
- * - Telegram deep link menggunakan parameter /start
- * - Countdown sebelum tombol pendaftaran aktif
- * - Responsive desktop dan mobile
+ * - Download PDF Google Drive
+ * - Modal dinamis dan countdown
+ * - Responsive desktop/mobile
  * - Optional IP restriction
- * - Tidak mengubah data Kintone
+ * - Tidak mengubah nilai di Kintone
  */
 
 (function () {
@@ -28,7 +25,7 @@
 
   const CONFIG = {
     name: "KViewer Job Apply Buttons",
-    version: "1.5.0",
+    version: "1.5.1",
     debug: false,
 
     host: "e-bridge-id.viewer.kintoneapp.com",
@@ -36,30 +33,31 @@
     detailPathPart: "/public/sswjoblist/detail/",
 
     jobIdFieldCode: "求人票ID",
-    jobIdLabels: ["求人票ID", "Job ID", "Job Id", "JOB ID"],
+    jobIdLabels: [
+      "求人票ID",
+      "Job ID",
+      "Job Id",
+      "JOB ID"
+    ],
     jobPrefix: "JOB-",
     pdfUrlFieldCode: "job_detail_url_idn",
 
     // ========================================================
     // REGISTRATION SETTINGS
     // ========================================================
-    // "whatsapp" = hanya WhatsApp
-    // "telegram" = hanya Telegram
-    // "both"     = WhatsApp dan Telegram
+    // "whatsapp" = WhatsApp saja
+    // "telegram" = Telegram saja
+    // "both"     = Keduanya
 
-    registrationMode: "telegram",
+    registrationMode: "both",
 
-    // Delay tombol pendaftaran dalam detik
     registrationDelaySeconds: 5,
 
-    // WhatsApp destination
     whatsappBaseUrl: "https://wa.me/6285258363076",
-
-    // Telegram bot destination
     telegramBotUrl: "https://t.me/actjob_id_bot",
 
     // ========================================================
-    // DETAIL PAGE SETTINGS
+    // DETAIL FIELDS
     // ========================================================
 
     detailFields: {
@@ -79,13 +77,13 @@
 
     ipRestriction: {
       enabled: false,
-      allowedIps: [""],
+      allowedIps: [],
       allowWhenUnknown: false,
       overrideQueryParam: "kv_test_ip",
       overrideLocalStorageKey: "kv_test_ip",
       publicIpUrls: [
         "https://api.ipify.org?format=json",
-        "https://ipinfo.io/ip",
+        "https://ipinfo.io/ip"
       ],
       timeoutMs: 2500,
     },
@@ -95,430 +93,209 @@
   };
 
   // ============================================================
-  // CONSTANTS & STATE
+  // INITIAL STATE
   // ============================================================
-
-  const IDS = {
-    style: "kv-job-apply-style",
-    modal: "kv-job-apply-modal",
-  };
-
-  const INSTANCE_KEY = "__kvJobApplyButtonsInstance";
-
-  const ATTR = {
-    cardEnhanced: "data-kv-job-card-enhanced",
-    detailEnhanced: "data-kv-job-detail-enhanced",
-  };
-
-  const state = {
-    accessAllowed: false,
-    accessReason: "checking",
-    accessIps: [],
-    observer: null,
-    renderTimer: null,
-    intervalId: null,
-    modalCountdownTimer: null,
-    clickGuard: null,
-  };
 
   if (location.hostname !== CONFIG.host) return;
 
-  // Prevent multiple instances
+  const IDS = {
+    style: "kv-job-apply-style",
+    modal: "kv-job-apply-modal"
+  };
+
+  const INSTANCE_KEY =
+    "__kvJobApplyButtonsInstance";
+
+  const CARD_ATTR =
+    "data-kv-job-card-enhanced";
+
+  const state = {
+    observer: null,
+    renderTimer: null,
+    intervalId: null,
+    countdownTimer: null,
+    clickGuard: null,
+    destroyed: false,
+  };
+
   if (
-    window[INSTANCE_KEY] &&
-    typeof window[INSTANCE_KEY].destroy === "function"
+    typeof window[INSTANCE_KEY]?.destroy === "function"
   ) {
     window[INSTANCE_KEY].destroy();
   }
 
-  window[INSTANCE_KEY] = {
-    destroy() {
-      clearTimeout(state.renderTimer);
-      clearInterval(state.intervalId);
-      clearInterval(state.modalCountdownTimer);
-
-      if (state.observer) state.observer.disconnect();
-
-      document.removeEventListener("keydown", closeOnEscape);
-
-      if (state.clickGuard) {
-        document.removeEventListener(
-          "click",
-          state.clickGuard,
-          true
-        );
-      }
-
-      document.getElementById(IDS.modal)?.remove();
-      document.body?.classList.remove("kv-job-modal-open");
-    },
-  };
+  window[INSTANCE_KEY] = { destroy };
 
   boot();
 
   // ============================================================
-  // INITIALIZATION
+  // GENERAL HELPERS
   // ============================================================
 
-  async function boot() {
-    installStyles();
-
-    state.accessAllowed = await checkAccess();
-
-    if (!state.accessAllowed) {
-      log("IP tidak diizinkan.", {
-        allowedIps: CONFIG.ipRestriction.allowedIps,
-        detectedIps: state.accessIps,
-        reason: state.accessReason,
-      });
-      return;
-    }
-
-    log("Script aktif.", {
-      version: CONFIG.version,
-      registrationMode: CONFIG.registrationMode,
-    });
-
-    installObserver();
-    installGlobalClickGuard();
-    scheduleRender("boot");
-
-    if (CONFIG.periodicDelay > 0) {
-      state.intervalId = setInterval(
-        () => scheduleRender("periodic"),
-        CONFIG.periodicDelay
+  function log(...args) {
+    if (CONFIG.debug) {
+      console.log(
+        `[${CONFIG.name} ${CONFIG.version}]`,
+        ...args
       );
     }
+  }
+
+  function norm(value) {
+    return String(value ?? "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function isIndexPage() {
     return (
       location.pathname.replace(/\/+$/, "") ===
-        CONFIG.listPath &&
-      !isDetailPage()
+      CONFIG.listPath
     );
   }
 
   function isDetailPage() {
-    return location.pathname.includes(CONFIG.detailPathPart);
-  }
-
-  function log(...args) {
-    if (!CONFIG.debug) return;
-
-    console.log(
-      `%c[${CONFIG.name}]`,
-      "background:#0079d2;color:#fff;font-weight:700;padding:2px 7px;border-radius:4px",
-      ...args
+    return location.pathname.includes(
+      CONFIG.detailPathPart
     );
   }
 
-  function normalizeText(value) {
-    return String(value || "")
-      .replace(/\u00a0/g, " ")
-      .replace(/[\t\r\n]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  function extractJobId(text) {
+    const match = norm(text).match(
+      /(?:^|[^A-Za-z0-9])(?:JOB-)?(20\d{2}-\d{3,})(?![A-Za-z0-9])/i
+    );
+
+    return match ? match[1] : "";
   }
 
-  function unique(values) {
+  function allJobIds(text) {
+    const matches = [
+      ...norm(text).matchAll(
+        /(?:^|[^A-Za-z0-9])(?:JOB-)?(20\d{2}-\d{3,})(?![A-Za-z0-9])/gi
+      )
+    ];
+
     return [
-      ...new Set(values.map(normalizeText).filter(Boolean))
+      ...new Set(matches.map(match => match[1]))
     ];
   }
 
-  // ============================================================
-  // IP RESTRICTION
-  // ============================================================
+  function makeJobCode(id) {
+    const validId = extractJobId(id);
 
-  async function checkAccess() {
-    if (!CONFIG.ipRestriction.enabled) {
-      state.accessReason = "ip-check-disabled";
-      return true;
-    }
-
-    const overrideIp = getOverrideIp();
-    const detectedIps = [];
-
-    if (overrideIp) detectedIps.push(overrideIp);
-
-    detectedIps.push(...await getPublicIps());
-    detectedIps.push(...await getLocalIpsViaWebRtc());
-
-    state.accessIps = unique(detectedIps);
-
-    const allowed = state.accessIps.some(ip =>
-      CONFIG.ipRestriction.allowedIps.includes(ip)
-    );
-
-    if (allowed) {
-      state.accessReason = overrideIp
-        ? "override-ip-match"
-        : "ip-match";
-      return true;
-    }
-
-    if (
-      !state.accessIps.length &&
-      CONFIG.ipRestriction.allowWhenUnknown
-    ) {
-      state.accessReason = "ip-unknown-allowed";
-      return true;
-    }
-
-    state.accessReason = state.accessIps.length
-      ? "ip-not-allowed"
-      : "ip-unknown-blocked";
-
-    return false;
+    return validId
+      ? CONFIG.jobPrefix + validId
+      : "";
   }
 
-  function getOverrideIp() {
-    const params = new URLSearchParams(location.search);
-
-    const fromUrl = normalizeText(
-      params.get(CONFIG.ipRestriction.overrideQueryParam)
-    );
-
-    if (fromUrl) {
-      try {
-        localStorage.setItem(
-          CONFIG.ipRestriction.overrideLocalStorageKey,
-          fromUrl
-        );
-      } catch (error) {
-        log("IP override storage error.", error);
-      }
-
-      return fromUrl;
+  function cssEscape(value) {
+    if (window.CSS?.escape) {
+      return CSS.escape(value);
     }
 
-    try {
-      return normalizeText(
-        localStorage.getItem(
-          CONFIG.ipRestriction.overrideLocalStorageKey
-        )
+    return String(value).replace(
+      /[^\w-]/g,
+      char => "\\" + char
+    );
+  }
+
+  // ============================================================
+  // LIFECYCLE
+  // ============================================================
+
+  function destroy() {
+    state.destroyed = true;
+
+    clearTimeout(state.renderTimer);
+    clearInterval(state.intervalId);
+    clearInterval(state.countdownTimer);
+
+    state.observer?.disconnect();
+
+    if (state.clickGuard) {
+      document.removeEventListener(
+        "click",
+        state.clickGuard,
+        true
       );
-    } catch {
-      return "";
-    }
-  }
-
-  async function getPublicIps() {
-    const results = [];
-
-    await Promise.all(
-      CONFIG.ipRestriction.publicIpUrls.map(async url => {
-        try {
-          const response = await fetchWithTimeout(
-            url,
-            CONFIG.ipRestriction.timeoutMs
-          );
-
-          if (!response.ok) return;
-
-          const contentType =
-            response.headers.get("content-type") || "";
-
-          if (contentType.includes("application/json")) {
-            const data = await response.json();
-            results.push(data.ip);
-          } else {
-            results.push(await response.text());
-          }
-        } catch (error) {
-          log("Public IP check failed.", url, error);
-        }
-      })
-    );
-
-    return results
-      .map(value =>
-        normalizeText(value).replace(/^"|"$/g, "")
-      )
-      .filter(isIpAddress);
-  }
-
-  function fetchWithTimeout(url, timeoutMs) {
-    const controller = new AbortController();
-
-    const timer = setTimeout(
-      () => controller.abort(),
-      timeoutMs
-    );
-
-    return fetch(url, {
-      signal: controller.signal,
-      cache: "no-store",
-    }).finally(() => clearTimeout(timer));
-  }
-
-  function getLocalIpsViaWebRtc() {
-    return new Promise(resolve => {
-      const PeerConnection =
-        window.RTCPeerConnection ||
-        window.webkitRTCPeerConnection ||
-        window.mozRTCPeerConnection;
-
-      if (!PeerConnection) {
-        resolve([]);
-        return;
-      }
-
-      const ips = new Set();
-      let peer;
-      let finished = false;
-
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-
-        clearTimeout(timeout);
-
-        try {
-          peer?.close();
-        } catch {}
-
-        resolve([...ips]);
-      };
-
-      const collect = text => {
-        const matches = String(text || "").match(
-          /\b(?:\d{1,3}\.){3}\d{1,3}\b/g
-        );
-
-        (matches || []).forEach(ip => {
-          if (isIpAddress(ip)) ips.add(ip);
-        });
-      };
-
-      const timeout = setTimeout(
-        finish,
-        CONFIG.ipRestriction.timeoutMs
-      );
-
-      try {
-        peer = new PeerConnection({ iceServers: [] });
-        peer.createDataChannel("kv-ip-check");
-
-        peer.onicecandidate = event => {
-          if (event.candidate) {
-            collect(event.candidate.candidate);
-          } else {
-            finish();
-          }
-        };
-
-        peer.createOffer()
-          .then(offer => {
-            collect(offer.sdp);
-            return peer.setLocalDescription(offer);
-          })
-          .catch(finish);
-      } catch {
-        finish();
-      }
-    });
-  }
-
-  function isIpAddress(value) {
-    const text = normalizeText(value);
-
-    if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(text)) {
-      return false;
     }
 
-    return text.split(".").every(part => {
-      const number = Number(part);
-      return Number.isInteger(number) &&
-        number >= 0 &&
-        number <= 255;
-    });
+    document.removeEventListener(
+      "keydown",
+      onEscape
+    );
+
+    document.getElementById(IDS.modal)?.remove();
+
+    document.body?.classList.remove(
+      "kv-job-modal-open"
+    );
   }
 
-  // ============================================================
-  // OBSERVER & RENDER
-  // ============================================================
+  async function boot() {
+    installStyles();
 
-  function installObserver() {
-    if (!document.body) {
-      setTimeout(installObserver, 100);
+    const allowed = await isAccessAllowed();
+
+    if (!allowed || state.destroyed) {
       return;
     }
 
-    state.observer = new MutationObserver(
-      () => scheduleRender("mutation")
-    );
-
-    state.observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-  }
-
-  function scheduleRender(reason) {
-    clearTimeout(state.renderTimer);
-
-    state.renderTimer = setTimeout(
-      () => render(reason),
-      CONFIG.mutationDelay
-    );
-  }
-
-  function render(reason) {
-    if (!document.body) return;
-
-    if (isDetailPage()) {
-      cleanupMisplacedDetailButtons();
-      enhanceDetailPage();
-    } else if (isIndexPage()) {
-      enhanceIndexPage();
-    }
-
-    if (reason === "boot") {
-      log("Render initialized.");
+    if (!document.body) {
+      document.addEventListener(
+        "DOMContentLoaded",
+        start,
+        { once: true }
+      );
+    } else {
+      start();
     }
   }
 
-  function installGlobalClickGuard() {
-    if (state.clickGuard) return;
+  function start() {
+    if (state.destroyed) return;
 
-    state.clickGuard = event => {
-      const target = event.target;
+    state.clickGuard = function (event) {
+      if (!(event.target instanceof Element)) {
+        return;
+      }
 
-      if (!(target instanceof Element)) return;
-
-      const action = target.closest(
+      const action = event.target.closest(
         "[data-kv-job-action]"
       );
 
       if (!action) return;
 
-      const type = action.getAttribute(
-        "data-kv-job-action"
-      );
+      const type = action.dataset.kvJobAction;
+
+      if (
+        ![
+          "apply",
+          "detail",
+          "download-pdf"
+        ].includes(type)
+      ) {
+        return;
+      }
 
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
 
-      switch (type) {
-        case "detail":
-          goToDetail(action);
-          break;
+      if (type === "apply") {
+        openApplyModal(
+          action.dataset.kvJobCode,
+          action
+        );
+      }
 
-        case "apply":
-          openApplyModal(
-            action.getAttribute("data-kv-job-code") || "",
-            action
-          );
-          break;
+      if (type === "detail") {
+        goToDetail(action);
+      }
 
-        case "download-pdf":
-          downloadPdf(
-            action.getAttribute("data-kv-pdf-url") || ""
-          );
-          break;
+      if (type === "download-pdf") {
+        downloadPdf(action.dataset.kvPdfUrl);
       }
     };
 
@@ -527,119 +304,456 @@
       state.clickGuard,
       true
     );
+
+    state.observer = new MutationObserver(
+      () => scheduleRender()
+    );
+
+    state.observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    scheduleRender();
+
+    if (CONFIG.periodicDelay > 0) {
+      state.intervalId = setInterval(
+        scheduleRender,
+        CONFIG.periodicDelay
+      );
+    }
+  }
+
+  function scheduleRender() {
+    if (state.destroyed) return;
+
+    clearTimeout(state.renderTimer);
+
+    state.renderTimer = setTimeout(
+      render,
+      CONFIG.mutationDelay
+    );
+  }
+
+  function render() {
+    if (state.destroyed) return;
+
+    if (isIndexPage()) {
+      cleanupMisplacedActions();
+      enhanceIndexPage();
+    } else if (isDetailPage()) {
+      cleanupMisplacedActions();
+      enhanceDetailPage();
+    }
   }
 
   // ============================================================
-  // INDEX PAGE
+  // FIELD / JOB ID DETECTION
+  // ============================================================
+
+  function fieldByCode(root, code) {
+    if (!root || !code) return null;
+
+    const selector =
+      `[data-field-code="${cssEscape(code)}"]`;
+
+    const nodes = [
+      ...root.querySelectorAll(selector)
+    ];
+
+    return (
+      nodes.find(el =>
+        el.matches(
+          ".kv-list-field-value, .kv-detail-field-value"
+        )
+      ) ||
+      nodes.find(el =>
+        el.matches(".kv-detail-field")
+      ) ||
+      nodes[0] ||
+      null
+    );
+  }
+
+  function getFieldText(field) {
+    if (!field) return "";
+
+    if (
+      field.matches("input, textarea, select")
+    ) {
+      return field.value || "";
+    }
+
+    const value = field.matches(
+      ".kv-list-field-value, .kv-detail-field-value"
+    )
+      ? field
+      : (
+          field.querySelector(
+            ".kv-list-field-value, .kv-detail-field-value"
+          ) || field
+        );
+
+    const control = value.querySelector(
+      "input, textarea, select"
+    );
+
+    if (control) {
+      return control.value || "";
+    }
+
+    return (
+      value.innerText ||
+      value.textContent ||
+      ""
+    );
+  }
+
+  function findJobIdInRoot(root) {
+    if (!root) return "";
+
+    // 1. Exact Kintone field code
+    const direct = extractJobId(
+      getFieldText(
+        fieldByCode(
+          root,
+          CONFIG.jobIdFieldCode
+        )
+      )
+    );
+
+    if (direct) return direct;
+
+    // 2. Visible field label
+    const labels = [
+      ...root.querySelectorAll(
+        "dt, th, label, .kv-list-field-label, .kv-detail-field-label"
+      )
+    ];
+
+    for (const element of labels) {
+      const label = norm(
+        element.innerText || element.textContent
+      );
+
+      if (!CONFIG.jobIdLabels.includes(label)) {
+        continue;
+      }
+
+      const parent = element.parentElement;
+
+      const sibling =
+        element.nextElementSibling ||
+        parent?.querySelector(
+          "dd, .kv-list-field-value, .kv-detail-field-value"
+        );
+
+      const result = extractJobId(
+        sibling?.innerText ||
+        sibling?.textContent ||
+        ""
+      );
+
+      if (result) return result;
+    }
+
+    // 3. Fallback: exactly one distinct Job ID
+    const ids = allJobIds(
+      root.innerText || root.textContent
+    );
+
+    return ids.length === 1
+      ? ids[0]
+      : "";
+  }
+
+  function displayJobCode(root) {
+    const field = fieldByCode(
+      root,
+      CONFIG.jobIdFieldCode
+    );
+
+    if (!field) return;
+
+    const value = field.matches(
+      ".kv-list-field-value, .kv-detail-field-value"
+    )
+      ? field
+      : field.querySelector(
+          ".kv-list-field-value, .kv-detail-field-value"
+        );
+
+    if (!value) return;
+
+    if (
+      value.querySelector(
+        "input, textarea, select"
+      )
+    ) {
+      return;
+    }
+
+    const id = extractJobId(
+      value.innerText || value.textContent
+    );
+
+    if (!id) return;
+
+    const target =
+      value.querySelector("div, span, p") ||
+      value;
+
+    const formatted = makeJobCode(id);
+
+    if (norm(target.textContent) !== formatted) {
+      target.textContent = formatted;
+    }
+  }
+
+  // ============================================================
+  // INDEX PAGE: FIND INDIVIDUAL RECORDS
+  // ============================================================
+
+  function findIndexCards() {
+    const scope =
+      document.querySelector("#__next main") ||
+      document.querySelector("main") ||
+      document;
+
+    // Support KViewer rows with or without kv-list-record
+    const rows = [
+      ...scope.querySelectorAll("tr")
+    ].filter(row => {
+      if (!row.querySelector("td")) {
+        return false;
+      }
+
+      const ids = allJobIds(
+        row.innerText || row.textContent
+      );
+
+      return (
+        ids.length === 1 &&
+        Boolean(findJobIdInRoot(row))
+      );
+    });
+
+    if (rows.length) {
+      return rows;
+    }
+
+    // Fallback for individual cards only
+    const candidates = [
+      ...scope.querySelectorAll(
+        ".kv-list-record, article, li, .card, [class*='Card'], [class*='card']"
+      )
+    ].filter(element => {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+
+      if (
+        element.id === "__next" ||
+        element === document.body
+      ) {
+        return false;
+      }
+
+      if (element.closest(`#${IDS.modal}`)) {
+        return false;
+      }
+
+      // Exclude wrappers containing other records
+      if (
+        element.querySelector(
+          "tr, article, .kv-list-record"
+        )
+      ) {
+        return false;
+      }
+
+      const ids = allJobIds(
+        element.innerText || element.textContent
+      );
+
+      if (
+        ids.length !== 1 ||
+        !findJobIdInRoot(element)
+      ) {
+        return false;
+      }
+
+      const rect =
+        element.getBoundingClientRect();
+
+      return (
+        rect.width > 160 &&
+        rect.height > 60
+      );
+    });
+
+    // Only retain innermost valid cards
+    return candidates.filter(card =>
+      !candidates.some(other =>
+        other !== card &&
+        card.contains(other)
+      )
+    );
+  }
+
+  // ============================================================
+  // REMOVE MISPLACED ACTION BUTTONS
+  // ============================================================
+
+  function cleanupMisplacedActions() {
+    const root =
+      document.getElementById("__next");
+
+    if (root) {
+      root.querySelectorAll(
+        ":scope > .kv-job-card-actions"
+      ).forEach(element => element.remove());
+
+      root.removeAttribute(CARD_ATTR);
+
+      root.classList.remove(
+        "kv-job-list-row-desktop-enhanced",
+        "kv-job-list-card-mobile-enhanced"
+      );
+    }
+
+    const validCards = new Set(
+      isIndexPage()
+        ? findIndexCards()
+        : []
+    );
+
+    document.querySelectorAll(
+      ".kv-job-card-actions"
+    ).forEach(actions => {
+      if (
+        actions.closest(`#${IDS.modal}`)
+      ) {
+        return;
+      }
+
+      const owner = [...validCards].find(
+        card => card.contains(actions)
+      );
+
+      if (!owner) {
+        actions.remove();
+      }
+    });
+
+    document.querySelectorAll(
+      `[${CARD_ATTR}="true"]`
+    ).forEach(element => {
+      if (validCards.has(element)) {
+        return;
+      }
+
+      element.removeAttribute(CARD_ATTR);
+
+      element.classList.remove(
+        "kv-job-list-row-desktop-enhanced",
+        "kv-job-list-card-mobile-enhanced"
+      );
+    });
+  }
+
+  // ============================================================
+  // ENHANCE INDEX PAGE
   // ============================================================
 
   function enhanceIndexPage() {
     const cards = findIndexCards();
 
     cards.forEach(card => {
-      if (
-        card.getAttribute(ATTR.cardEnhanced) === "true"
-      ) {
-        return;
-      }
-
-      const jobId = findJobIdInRoot(card);
-      if (!jobId) return;
-
-      applyJobCodeDisplay(card);
-
-      const actionRow = document.createElement("div");
-      actionRow.className = "kv-job-card-actions";
-
-      const detailButton = createButton(
-        "DETAIL",
-        "secondary"
-      );
-      detailButton.dataset.kvJobAction = "detail";
-
-      const applyButton = createButton(
-        "DAFTAR",
-        "primary"
-      );
-      applyButton.dataset.kvJobAction = "apply";
-      applyButton.dataset.kvJobCode = makeJobCode(jobId);
-
-      actionRow.append(
-        detailButton,
-        applyButton
+      const jobCode = makeJobCode(
+        findJobIdInRoot(card)
       );
 
-      const mount = findIndexActionMount(card);
+      if (!jobCode) return;
+
+      displayJobCode(card);
+
+      const mount = findIndexActionMount(
+        card
+      );
+
       if (!mount) return;
 
-      mount.appendChild(actionRow);
-      hideNativeDetailArrow(card);
+      let actions = mount.querySelector(
+        ":scope > .kv-job-card-actions"
+      );
 
-      if (
-        mount.classList.contains("kv-job-list-action-dd")
-      ) {
-        card.classList.add(
-          "kv-job-list-card-mobile-enhanced"
+      if (!actions) {
+        actions = document.createElement("div");
+
+        actions.className =
+          "kv-job-card-actions";
+
+        const detailButton = createButton(
+          "DETAIL",
+          "secondary",
+          "detail"
         );
-        card.classList.remove(
-          "kv-job-list-row-desktop-enhanced"
+
+        detailButton.dataset.kvJobAction =
+          "detail";
+
+        const applyButton = createButton(
+          "DAFTAR",
+          "primary",
+          "send"
         );
-      } else {
-        card.classList.add(
-          "kv-job-list-row-desktop-enhanced"
+
+        applyButton.dataset.kvJobAction =
+          "apply";
+
+        actions.append(
+          detailButton,
+          applyButton
         );
-        card.classList.remove(
-          "kv-job-list-card-mobile-enhanced"
-        );
+
+        mount.appendChild(actions);
       }
 
-      card.setAttribute(ATTR.cardEnhanced, "true");
-    });
-  }
-
-  function findIndexCards() {
-    const rows = Array.from(
-      document.querySelectorAll("tr.kv-list-record")
-    );
-
-    if (rows.length) {
-      return rows.filter(findJobIdInRoot);
-    }
-
-    const candidates = Array.from(
-      document.querySelectorAll(
-        "article, li, .card, [class*='card'], [class*='Card'], [class*='record'], [class*='Record']"
-      )
-    );
-
-    const cards = candidates.filter(element => {
-      if (!(element instanceof HTMLElement)) return false;
-      if (element.closest("#" + IDS.modal)) return false;
-      if (!findJobIdInRoot(element)) return false;
-
-      const rect = element.getBoundingClientRect();
-
-      return rect.width > 160 &&
-        rect.height > 120;
-    });
-
-    if (cards.length) {
-      return cards.filter(card =>
-        !cards.some(other =>
-          other !== card && other.contains(card)
-        )
+      const applyButton = actions.querySelector(
+        '[data-kv-job-action="apply"]'
       );
-    }
 
-    return Array.from(document.body.children)
-      .filter(element =>
-        element instanceof HTMLElement &&
-        findJobIdInRoot(element)
+      if (applyButton) {
+        applyButton.dataset.kvJobCode =
+          jobCode;
+      }
+
+      hideNativeDetailArrow(card);
+
+      const mobile = mount.classList.contains(
+        "kv-job-list-action-dd"
       );
+
+      card.classList.toggle(
+        "kv-job-list-card-mobile-enhanced",
+        mobile
+      );
+
+      card.classList.toggle(
+        "kv-job-list-row-desktop-enhanced",
+        !mobile
+      );
+
+      card.setAttribute(
+        CARD_ATTR,
+        "true"
+      );
+    });
   }
 
   function findIndexActionMount(card) {
-    if (!card.matches("tr.kv-list-record")) {
+    if (card.tagName !== "TR") {
       return card;
     }
 
@@ -647,688 +761,521 @@
       "td:first-child dl"
     );
 
-    if (!dl) {
-      let cell = card.querySelector(
-        ":scope > td.kv-job-table-action-cell"
+    if (dl) {
+      card.closest("table")?.classList.add(
+        "kv-job-mobile-list-table"
       );
 
-      if (!cell) {
-        cell = document.createElement("td");
-        cell.className = "kv-job-table-action-cell";
-        card.appendChild(cell);
+      card.closest("tbody")?.classList.add(
+        "kv-job-mobile-list-body"
+      );
+
+      card.querySelector(
+        "td:first-child"
+      )?.classList.add(
+        "kv-job-mobile-list-cell"
+      );
+
+      let dd = dl.querySelector(
+        ".kv-job-list-action-dd"
+      );
+
+      if (!dd) {
+        dd = document.createElement("dd");
+
+        dd.className =
+          "kv-job-list-action-dd";
+
+        dl.appendChild(dd);
       }
 
-      return cell;
+      return dd;
     }
 
-    const table = card.closest("table");
-    const tbody = card.closest("tbody");
-    const firstCell = card.querySelector("td:first-child");
-
-    table?.classList.add("kv-job-mobile-list-table");
-    tbody?.classList.add("kv-job-mobile-list-body");
-    firstCell?.classList.add("kv-job-mobile-list-cell");
-
-    let actionItem = dl.querySelector(
-      ".kv-job-list-action-dd"
+    let cell = card.querySelector(
+      ":scope > td.kv-job-table-action-cell"
     );
 
-    if (!actionItem) {
-      actionItem = document.createElement("dd");
-      actionItem.className = "kv-job-list-action-dd";
-      dl.appendChild(actionItem);
+    if (!cell) {
+      cell = document.createElement("td");
+
+      cell.className =
+        "kv-job-table-action-cell";
+
+      card.appendChild(cell);
     }
 
-    return actionItem;
+    return cell;
   }
 
   function hideNativeDetailArrow(card) {
-    if (!card.matches("tr.kv-list-record")) return;
+    if (card.tagName !== "TR") return;
 
-    const cells = Array.from(card.children)
-      .filter(child => child.tagName === "TD");
+    [...card.children]
+      .filter(el => el.tagName === "TD")
+      .forEach(cell => {
+        if (
+          cell.classList.contains(
+            "kv-job-table-action-cell"
+          )
+        ) {
+          return;
+        }
 
-    const arrowCell = cells.find(cell => {
-      const text = normalizeText(
-        cell.innerText || cell.textContent
-      );
+        const text = norm(
+          cell.innerText || cell.textContent
+        );
 
-      return (
-        cell.querySelector("svg") &&
-        !text &&
-        !cell.getAttribute("data-field-code")
-      );
-    });
-
-    arrowCell?.classList.add(
-      "kv-job-native-arrow-hidden"
-    );
+        if (
+          !text &&
+          cell.querySelector("svg") &&
+          !cell.dataset.fieldCode
+        ) {
+          cell.classList.add(
+            "kv-job-native-arrow-hidden"
+          );
+        }
+      });
   }
 
   // ============================================================
-  // DETAIL PAGE
+  // ENHANCE DETAIL PAGE
   // ============================================================
 
   function enhanceDetailPage() {
-    const root = document.querySelector(".kv-detail");
+    const root = document.querySelector(
+      ".kv-detail"
+    );
+
     if (!root) return;
 
-    cleanupLooseActionButtons(document.body);
-    applyJobCodeDisplay(root);
-    applyEmptyDetailFieldVisibility(root);
-    hidePdfUrlField(root);
+    displayJobCode(root);
+    updateEmptyDetailFields(root);
 
-    const jobId = findJobIdInRoot(root);
-    if (!jobId) return;
+    const pdfUrl = findPdfUrl(root);
 
-    const pdfUrl = findPdfDownloadUrl(root);
-    const backElement = findBackElement(root);
+    const pdfField = fieldByCode(
+      root,
+      CONFIG.pdfUrlFieldCode
+    );
 
-    if (!backElement) return;
+    if (pdfField) {
+      pdfField.classList.add(
+        "kv-job-pdf-url-field-hidden"
+      );
 
-    enhanceBackControl(backElement);
+      pdfField.closest(
+        ".kv-detail-field"
+      )?.classList.add(
+        "kv-job-pdf-url-field-hidden"
+      );
+    }
 
-    document.querySelectorAll(
-      ".kv-job-detail-toolbar [data-kv-job-action='apply']"
-    ).forEach((button, index) => {
-      if (index > 0) button.remove();
-    });
+    const jobCode = makeJobCode(
+      findJobIdInRoot(root)
+    );
 
-    const mount = backElement.parentElement;
-    if (!mount) return;
+    if (!jobCode) return;
 
-    mount.classList.add("kv-job-detail-toolbar");
-    mount.classList.toggle(
+    const back = findBackElement(root);
+
+    if (!back || !back.parentElement) {
+      return;
+    }
+
+    enhanceBackControl(back);
+
+    const toolbar = back.parentElement;
+
+    toolbar.classList.add(
+      "kv-job-detail-toolbar"
+    );
+
+    toolbar.classList.toggle(
       "kv-job-detail-toolbar-has-pdf",
       Boolean(pdfUrl)
     );
 
-    let applyButton = mount.querySelector(
+    document.querySelectorAll(
+      ".kv-job-detail-toolbar [data-kv-job-action='apply']"
+    ).forEach(element => {
+      if (element.parentElement !== toolbar) {
+        element.remove();
+      }
+    });
+
+    let apply = toolbar.querySelector(
       ":scope > [data-kv-job-action='apply']"
     );
 
-    if (!applyButton) {
-      applyButton = createButton(
+    if (!apply) {
+      apply = createButton(
         "DAFTAR",
-        "primary"
+        "primary",
+        "send"
       );
-      mount.appendChild(applyButton);
+
+      apply.dataset.kvJobAction =
+        "apply";
+
+      toolbar.appendChild(apply);
     }
 
-    applyButton.dataset.kvJobAction = "apply";
-    applyButton.dataset.kvJobCode = makeJobCode(jobId);
+    apply.dataset.kvJobCode = jobCode;
 
-    let pdfButton = mount.querySelector(
+    let pdf = toolbar.querySelector(
       ":scope > [data-kv-job-action='download-pdf']"
     );
 
     if (pdfUrl) {
-      if (!pdfButton) {
-        pdfButton = createButton(
+      if (!pdf) {
+        pdf = createButton(
           "DOWNLOAD PDF",
           "secondary",
           "download"
         );
 
-        pdfButton.classList.add(
+        pdf.classList.add(
           "kv-job-download-pdf-button"
         );
 
-        mount.insertBefore(pdfButton, applyButton);
+        pdf.dataset.kvJobAction =
+          "download-pdf";
+
+        toolbar.insertBefore(
+          pdf,
+          apply
+        );
       }
 
-      pdfButton.dataset.kvJobAction = "download-pdf";
-      pdfButton.dataset.kvPdfUrl = pdfUrl;
-      pdfButton.hidden = false;
-    } else {
-      pdfButton?.remove();
+      pdf.dataset.kvPdfUrl = pdfUrl;
+    } else if (pdf) {
+      pdf.remove();
     }
-
-    document.body.setAttribute(
-      ATTR.detailEnhanced,
-      "true"
-    );
   }
 
-  function cleanupLooseActionButtons(root) {
-    root.querySelectorAll(
-      "[data-kv-job-action='detail'], [data-kv-job-action='apply']"
-    ).forEach(button => {
-      if (
-        button.closest(".kv-job-detail-toolbar") ||
-        button.closest("#" + IDS.modal)
-      ) {
-        return;
-      }
+  function updateEmptyDetailFields(root) {
+    const cfg = CONFIG.detailFields;
 
-      const wrapper = button.closest(
-        ".kv-job-card-actions"
+    for (
+      const field of root.querySelectorAll(
+        ".kv-detail-field"
+      )
+    ) {
+      const type = norm(
+        field.dataset.fieldType
       );
 
-      if (wrapper) wrapper.remove();
-      else button.remove();
-    });
-  }
-
-  function cleanupMisplacedDetailButtons() {
-    document.querySelectorAll(
-      "aside .kv-job-detail-toolbar"
-    ).forEach(toolbar => {
-      toolbar.querySelectorAll(
-        "[data-kv-job-action='apply']"
-      ).forEach(button => button.remove());
-
-      toolbar.classList.remove(
-        "kv-job-detail-toolbar"
-      );
-    });
-  }
-
-  function applyEmptyDetailFieldVisibility(root) {
-    const settings = CONFIG.detailFields;
-
-    const neverHideTypes = new Set(
-      settings.neverHideFieldTypes || []
-    );
-
-    const neverHideCodes = new Set(
-      settings.neverHideFieldCodes || []
-    );
-
-    root.querySelectorAll(
-      ".kv-detail-field"
-    ).forEach(field => {
-      const type = normalizeText(
-        field.getAttribute("data-field-type")
+      const code = norm(
+        field.dataset.fieldCode
       );
 
-      const code = normalizeText(
-        field.getAttribute("data-field-code")
+      const value = field.querySelector(
+        ".kv-detail-field-value"
       );
 
-      const shouldHide =
-        settings.hideEmptyFields &&
-        !neverHideTypes.has(type) &&
-        !neverHideCodes.has(code) &&
-        !field.querySelector("[data-kv-job-action]") &&
-        isEmptyDetailField(field);
+      const hasContent =
+        value && (
+          norm(
+            value.innerText ||
+            value.textContent
+          ) ||
+          value.querySelector(
+            "img, video, audio, canvas, iframe, svg, a[href], button, input, textarea, select"
+          )
+        );
+
+      const hide =
+        cfg.hideEmptyFields &&
+        value &&
+        !hasContent &&
+        !cfg.neverHideFieldTypes.includes(type) &&
+        !cfg.neverHideFieldCodes.includes(code);
 
       field.classList.toggle(
         "kv-job-empty-field-hidden",
-        shouldHide
+        Boolean(hide)
       );
-
-      if (shouldHide) {
-        field.style.setProperty(
-          "display",
-          "none",
-          "important"
-        );
-      } else {
-        field.style.removeProperty("display");
-      }
-    });
+    }
   }
 
-  function isEmptyDetailField(field) {
-    const value = field.querySelector(
-      ".kv-detail-field-value"
-    );
-
-    if (!value) return false;
-
-    if (
-      value.querySelector(
-        "img, video, audio, canvas, iframe, svg, a[href], button, input, textarea, select"
+  function findBackElement(root) {
+    return [
+      ...root.querySelectorAll(
+        "a, button, [role='button']"
       )
-    ) {
-      return false;
-    }
+    ].find(element => {
+      if (element.dataset.kvJobAction) {
+        return false;
+      }
 
-    return !normalizeText(
-      value.innerText || value.textContent
-    );
-  }
-
-  function hidePdfUrlField(root) {
-    const field = findFieldElementByCode(
-      root,
-      CONFIG.pdfUrlFieldCode
-    );
-
-    if (!field) return;
-
-    field.classList.add(
-      "kv-job-pdf-url-field-hidden"
-    );
-
-    field.style.setProperty(
-      "display",
-      "none",
-      "important"
-    );
-  }
-
-  // ============================================================
-  // FIELD EXTRACTION
-  // ============================================================
-
-  function cssEscape(value) {
-    if (
-      window.CSS &&
-      typeof window.CSS.escape === "function"
-    ) {
-      return window.CSS.escape(String(value));
-    }
-
-    return String(value).replace(
-      /[^a-zA-Z0-9_-]/g,
-      char => "\\" + char
-    );
-  }
-
-  function findFieldElementByCode(root, code) {
-    if (!root || !code) return null;
-
-    const escaped = cssEscape(code);
-
-    const selector = [
-      `.kv-list-field-value[data-field-code="${escaped}"]`,
-      `.kv-detail-field[data-field-code="${escaped}"]`,
-      `.kv-detail-field-value[data-field-code="${escaped}"]`,
-    ].join(", ");
-
-    if (root.matches?.(selector)) return root;
-
-    const found = root.querySelector(selector);
-    if (found) return found;
-
-    const generic = `[data-field-code="${escaped}"]`;
-
-    if (root.matches?.(generic)) return root;
-
-    return root.querySelector(generic);
-  }
-
-  function getFieldValueElement(field) {
-    if (!field) return null;
-
-    if (
-      field.classList.contains("kv-list-field-value") ||
-      field.classList.contains("kv-detail-field-value")
-    ) {
-      return field;
-    }
-
-    return field.querySelector(
-      ".kv-list-field-value, .kv-detail-field-value"
-    );
-  }
-
-  function findNextMeaningfulElement(element) {
-    let current = element.nextElementSibling;
-
-    while (current) {
-      const text = normalizeText(
-        current.innerText || current.textContent
+      const label = norm(
+        element.innerText ||
+        element.textContent ||
+        element.getAttribute("aria-label")
       );
 
-      if (text) return current;
+      const href =
+        element.getAttribute("href") ||
+        "";
 
-      current = current.nextElementSibling;
-    }
-
-    const parent = element.parentElement;
-    if (!parent) return null;
-
-    const siblings = Array.from(parent.children);
-    const index = siblings.indexOf(element);
-
-    for (let i = index + 1; i < siblings.length; i++) {
-      const sibling = siblings[i];
-
-      if (
-        normalizeText(
-          sibling.innerText || sibling.textContent
-        )
-      ) {
-        return sibling;
-      }
-    }
-
-    return null;
-  }
-
-  function findFirstJobIdText(root) {
-    const text = normalizeText(
-      root.innerText || root.textContent
-    );
-
-    const match = text.match(
-      /\b20\d{2}-\d{3,}\b/
-    );
-
-    return match ? match[0] : "";
-  }
-
-  function looksLikeJobId(value) {
-    return /\b20\d{2}-\d{3,}\b/.test(
-      normalizeText(value)
-    );
-  }
-
-  function findValueByDataFieldCode(root, code) {
-    const field = findFieldElementByCode(
-      root,
-      code
-    );
-
-    if (!field) return "";
-
-    if (field.matches("input, textarea, select")) {
-      return normalizeText(field.value);
-    }
-
-    if (
-      field.classList.contains("kv-list-field-label") ||
-      field.classList.contains("kv-detail-field-label")
-    ) {
-      const next = findNextMeaningfulElement(field);
-
-      if (next) {
-        return (
-          findFirstJobIdText(next) ||
-          normalizeText(
-            next.innerText || next.textContent
-          )
-        );
-      }
-    }
-
-    const control = field.querySelector(
-      "input, textarea, select"
-    );
-
-    if (control) {
-      return normalizeText(
-        control.value || control.textContent
-      );
-    }
-
-    const value = getFieldValueElement(field);
-
-    if (value) {
       return (
-        findFirstJobIdText(value) ||
-        normalizeText(
-          value.innerText || value.textContent
+        [
+          "kembali",
+          "戻る",
+          "back"
+        ].includes(label.toLowerCase()) ||
+        (
+          href.includes(CONFIG.listPath) &&
+          !href.includes(
+            CONFIG.detailPathPart
+          )
         )
       );
-    }
-
-    return findFirstJobIdText(field);
+    }) || null;
   }
 
-  function findValueByVisibleLabel(root, label) {
-    const elements = Array.from(
-      root.querySelectorAll(
-        "div, span, p, dt, th, label"
-      )
+  function enhanceBackControl(element) {
+    element.classList.add(
+      "kv-job-back-button"
     );
 
-    const found = elements.find(element =>
-      normalizeText(
-        element.innerText || element.textContent
-      ) === label
+    element.classList.remove(
+      "underline"
     );
-
-    if (!found) return "";
-
-    const next = findNextMeaningfulElement(found);
-
-    if (next) {
-      const value =
-        findFirstJobIdText(next) ||
-        normalizeText(
-          next.innerText || next.textContent
-        );
-
-      if (looksLikeJobId(value)) {
-        return value;
-      }
-    }
-
-    const parent = found.parentElement;
-
-    if (parent) {
-      const text = normalizeText(
-        parent.innerText || parent.textContent
-      );
-
-      const match = text.match(
-        /\b20\d{2}-\d{3,}\b/
-      );
-
-      if (match) return match[0];
-    }
-
-    return "";
-  }
-
-  function findJobIdInRoot(root) {
-    const direct = findValueByDataFieldCode(
-      root,
-      CONFIG.jobIdFieldCode
-    );
-
-    if (direct) return direct;
-
-    for (const label of CONFIG.jobIdLabels) {
-      const value = findValueByVisibleLabel(
-        root,
-        label
-      );
-
-      if (value) return value;
-    }
-
-    return findFirstJobIdText(root);
-  }
-
-  function makeJobCode(jobId) {
-    const clean = normalizeText(jobId)
-      .replace(/^JOB-/i, "");
-
-    return CONFIG.jobPrefix + clean;
-  }
-
-  function applyJobCodeDisplay(root) {
-    const field = findFieldElementByCode(
-      root,
-      CONFIG.jobIdFieldCode
-    );
-
-    if (!field) return;
-
-    let value = getFieldValueElement(field);
 
     if (
-      !value &&
-      (
-        field.classList.contains("kv-list-field-label") ||
-        field.classList.contains("kv-detail-field-label")
-      )
-    ) {
-      value = findNextMeaningfulElement(field);
-    }
-
-    if (!value) return;
-
-    const rawJobId = findFirstJobIdText(value);
-    if (!rawJobId) return;
-
-    const jobCode = makeJobCode(rawJobId);
-
-    const target =
-      value.querySelector("div, span, p") ||
-      value;
-
-    if (
-      normalizeText(target.textContent) === jobCode
+      element.dataset.kvJobBackEnhanced ===
+      "true"
     ) {
       return;
     }
 
-    target.textContent = jobCode;
-    target.setAttribute(
-      "data-kv-job-code-formatted",
-      "true"
+    const label = norm(
+      element.innerText ||
+      element.textContent
+    ) || "Kembali";
+
+    element.innerHTML = `
+      ${icon("back")}
+      <span class="kv-job-back-label"></span>
+    `;
+
+    element.querySelector(
+      ".kv-job-back-label"
+    ).textContent = label;
+
+    element.dataset.kvJobBackEnhanced =
+      "true";
+  }
+
+  // ============================================================
+  // DETAIL NAVIGATION
+  // ============================================================
+
+  function goToDetail(action) {
+    const card =
+      findIndexCards().find(item =>
+        item.contains(action)
+      ) ||
+      action.closest(
+        "tr, article, li, .card, .kv-list-record"
+      );
+
+    if (!card) return;
+
+    const link = [
+      ...card.querySelectorAll("a[href]")
+    ].find(anchor =>
+      anchor.href.includes(
+        CONFIG.detailPathPart
+      ) ||
+      /\/detail\//.test(anchor.href)
     );
+
+    if (link) {
+      location.assign(link.href);
+      return;
+    }
+
+    const arrow = [
+      ...card.querySelectorAll(
+        "a, button, [role='button'], [onclick], [tabindex]"
+      )
+    ].find(element => {
+      if (
+        element.closest(
+          ".kv-job-card-actions"
+        )
+      ) {
+        return false;
+      }
+
+      const text = norm(
+        element.textContent
+      );
+
+      return (
+        !text ||
+        /detail|詳細|›|»|＞/i.test(text)
+      );
+    });
+
+    if (arrow) {
+      arrow.click();
+    } else {
+      card.click();
+    }
   }
 
   // ============================================================
   // PDF DOWNLOAD
   // ============================================================
 
-  function extractHttpUrls(value) {
-    const text = normalizeText(value);
-    if (!text) return [];
-
+  function extractUrls(text) {
     return (
-      text.match(/https?:\/\/[^\s"'<>]+/gi) || []
-    ).map(url => {
-      try {
-        return new URL(url).href;
-      } catch {
-        return url;
-      }
-    });
+      norm(text).match(
+        /https?:\/\/[^\s"'<>]+/gi
+      ) || []
+    );
   }
 
-  function isGoogleDriveUrl(url) {
+  function isDriveUrl(url) {
     try {
-      const hostname = new URL(url)
-        .hostname.toLowerCase();
+      const host = new URL(
+        url
+      ).hostname.toLowerCase();
 
       return [
         "drive.google.com",
         "docs.google.com",
-        "drive.usercontent.google.com",
-      ].includes(hostname);
+        "drive.usercontent.google.com"
+      ].includes(host);
     } catch {
       return false;
     }
   }
 
-  function findPdfDownloadUrl(root) {
-    const field = findFieldElementByCode(
+  function findPdfUrl(root) {
+    const field = fieldByCode(
       root,
       CONFIG.pdfUrlFieldCode
     );
 
     if (!field) return "";
 
-    const value = getFieldValueElement(field) || field;
-    const candidates = [];
+    const urls = [
+      ...field.querySelectorAll("a[href]")
+    ].map(anchor => anchor.href);
 
-    if (field.matches("input, textarea, select")) {
-      candidates.push(field.value);
-    }
-
-    value.querySelectorAll("a[href]").forEach(link => {
-      candidates.push(
-        link.getAttribute("href"),
-        link.href
-      );
-    });
-
-    candidates.push(
-      value.innerText,
-      value.textContent
+    urls.push(
+      ...extractUrls(
+        getFieldText(field)
+      )
     );
 
-    return (
-      candidates
-        .flatMap(extractHttpUrls)
-        .find(isGoogleDriveUrl) || ""
-    );
-  }
-
-  function toGoogleDriveDownloadUrl(url) {
-    const fileId =
-      (url.match(/\/file\/d\/([^/]+)/) || [])[1] ||
-      (url.match(/[?&]id=([^&]+)/) || [])[1];
-
-    if (!fileId) return url;
-
-    return (
-      "https://drive.google.com/uc?export=download&id=" +
-      encodeURIComponent(fileId)
-    );
+    return urls.find(isDriveUrl) || "";
   }
 
   function downloadPdf(rawUrl) {
-    const url = extractHttpUrls(rawUrl)
-      .find(isGoogleDriveUrl);
+    if (!isDriveUrl(rawUrl)) return;
 
-    if (!url) return;
+    const fileId =
+      (
+        rawUrl.match(
+          /\/file\/d\/([^/]+)/
+        ) || []
+      )[1] ||
+      (
+        rawUrl.match(
+          /[?&]id=([^&]+)/
+        ) || []
+      )[1];
 
-    const anchor = document.createElement("a");
+    const url = fileId
+      ? (
+          "https://drive.google.com/uc?export=download&id=" +
+          encodeURIComponent(fileId)
+        )
+      : rawUrl;
 
-    anchor.href = toGoogleDriveDownloadUrl(url);
+    const anchor =
+      document.createElement("a");
+
+    anchor.href = url;
     anchor.target = "_blank";
     anchor.rel = "noopener noreferrer";
     anchor.download = "";
 
     document.body.appendChild(anchor);
+
     anchor.click();
     anchor.remove();
   }
 
   // ============================================================
-  // BUTTONS
+  // SVG ICONS
   // ============================================================
 
-  function getActionIcon(name) {
-    const attrs =
-      'xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
-
+  function icon(name) {
     const paths = {
-      back:
-        '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
       detail:
         '<path d="M2.1 12s3.5-7 9.9-7 9.9 7 9.9 7-3.5 7-9.9 7-9.9-7-9.9-7Z"/><circle cx="12" cy="12" r="3"/>',
-      download:
-        '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+
       send:
         '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+
+      download:
+        '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+
+      back:
+        '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+
+      close:
+        '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+
+      copy:
+        '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>'
     };
 
-    if (!paths[name]) return "";
-
-    return `<svg ${attrs}>${paths[name]}</svg>`;
+    return `
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.25"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        ${paths[name] || ""}
+      </svg>
+    `;
   }
 
-  function createButton(label, variant, iconName) {
-    const button = document.createElement("button");
+  // ============================================================
+  // CREATE BUTTONS
+  // ============================================================
+
+  function createButton(
+    label,
+    variant,
+    iconName
+  ) {
+    const button =
+      document.createElement("button");
 
     button.type = "button";
+
     button.className =
       `kv-job-button kv-job-button-${variant}`;
 
-    const icon =
-      iconName ||
-      (
-        label === "DETAIL"
-          ? "detail"
-          : label.includes("DOWNLOAD")
-            ? "download"
-            : "send"
-      );
-
     button.innerHTML = `
       <span class="kv-job-button-content">
-        ${getActionIcon(icon)}
+        ${icon(iconName)}
         <span class="kv-job-button-label"></span>
       </span>
     `;
@@ -1340,404 +1287,232 @@
     return button;
   }
 
-  function enhanceBackControl(element) {
-    element.classList.add("kv-job-back-button");
-    element.classList.remove("underline");
-
-    if (
-      element.getAttribute(
-        "data-kv-job-back-enhanced"
-      ) === "true"
-    ) {
-      return;
-    }
-
-    const label = normalizeText(
-      element.innerText || element.textContent
-    ) || "Kembali";
-
-    element.innerHTML = `
-      ${getActionIcon("back")}
-      <span class="kv-job-back-label"></span>
-    `;
-
-    element.querySelector(
-      ".kv-job-back-label"
-    ).textContent = label;
-
-    element.setAttribute(
-      "data-kv-job-back-enhanced",
-      "true"
-    );
-
-    element.setAttribute("aria-label", label);
-  }
-
-  function findBackElement(root) {
-    const elements = Array.from(
-      root.querySelectorAll(
-        "a, button, [role='button']"
-      )
-    ).filter(element =>
-      !element.matches("[data-kv-job-action]")
-    );
-
-    return elements.find(element => {
-      const text = normalizeText(
-        element.innerText ||
-        element.textContent ||
-        element.getAttribute("aria-label")
-      );
-
-      const href =
-        element.getAttribute("href") || "";
-
-      return (
-        text === "Kembali" ||
-        text === "戻る" ||
-        text.toLowerCase() === "back" ||
-        (
-          href.includes(CONFIG.listPath) &&
-          Boolean(element.closest(".kv-detail"))
-        )
-      );
-    }) || null;
-  }
-
-  function findDetailLink(root) {
-    if (!root) return null;
-
-    return Array.from(
-      root.querySelectorAll("a[href]")
-    ).find(link =>
-      link.href.includes(CONFIG.detailPathPart) ||
-      /\/detail\//.test(link.href)
-    ) || null;
-  }
-
-  function findClickableDetailTarget(root) {
-    if (!root) return null;
-
-    return Array.from(
-      root.querySelectorAll(
-        "a, button, [role='button'], [onclick], [tabindex]"
-      )
-    ).find(element => {
-      if (element.closest(".kv-job-card-actions")) {
-        return false;
-      }
-
-      const text = normalizeText(
-        element.innerText || element.textContent
-      );
-
-      return (
-        !text ||
-        /detail|詳細|›|»|＞/i.test(text)
-      );
-    }) || null;
-  }
-
-  function goToDetail(button) {
-    const card = button.closest(
-      "tr.kv-list-record, article, li, .card, [class*='card'], [class*='Card'], [class*='record'], [class*='Record']"
-    ) || button.parentElement;
-
-    const link = findDetailLink(
-      card || document.body
-    );
-
-    if (link) {
-      location.href = link.href;
-      return;
-    }
-
-    const clickable = findClickableDetailTarget(card);
-
-    if (clickable) {
-      clickable.click();
-      return;
-    }
-
-    card?.click();
-  }
-
   // ============================================================
-  // REGISTRATION CHANNEL SETTINGS
+  // REGISTRATION CHANNELS
   // ============================================================
 
-  function getRegistrationChannels() {
-    const mode = normalizeText(
+  function registrationChannels() {
+    const mode = norm(
       CONFIG.registrationMode
     ).toLowerCase();
 
-    switch (mode) {
-      case "both":
-        return ["whatsapp", "telegram"];
-
-      case "telegram":
-        return ["telegram"];
-
-      case "whatsapp":
-        return ["whatsapp"];
-
-      default:
-        log(
-          "Invalid registrationMode, fallback to WhatsApp.",
-          mode
-        );
-        return ["whatsapp"];
-    }
-  }
-
-  function isTelegramPayloadValid(jobCode) {
-    // Telegram start payload:
-    // A-Z, a-z, 0-9, _, -
-    // Maximum 64 characters
-
-    return /^[A-Za-z0-9_-]{1,64}$/.test(jobCode);
-  }
-
-  function getRegistrationUrl(channel, jobCode) {
-    if (channel === "whatsapp") {
-      const url = new URL(
-        CONFIG.whatsappBaseUrl
-      );
-
-      url.searchParams.set("text", jobCode);
-
-      return url.toString();
+    if (mode === "both") {
+      return [
+        "whatsapp",
+        "telegram"
+      ];
     }
 
-    if (channel === "telegram") {
-      const url = new URL(
-        CONFIG.telegramBotUrl
-      );
-
-      if (isTelegramPayloadValid(jobCode)) {
-        url.searchParams.set(
-          "start",
-          jobCode
-        );
-      } else {
-        log(
-          "Invalid Telegram start payload. Manual copy required.",
-          jobCode
-        );
-      }
-
-      return url.toString();
-    }
-
-    return "#";
+    return [
+      mode === "telegram"
+        ? "telegram"
+        : "whatsapp"
+    ];
   }
 
-  // ============================================================
-  // DYNAMIC REGISTRATION INSTRUCTIONS
-  // ============================================================
-
-  function getRegistrationInstructions(
-    channels,
+  function registrationUrl(
+    channel,
     jobCode
   ) {
-    const whatsapp = channels.includes("whatsapp");
-    const telegram = channels.includes("telegram");
+    const base =
+      channel === "telegram"
+        ? CONFIG.telegramBotUrl
+        : CONFIG.whatsappBaseUrl;
 
-    const validTelegramPayload =
-      isTelegramPayloadValid(jobCode);
+    const url = new URL(base);
 
-    const steps = [
-      "Periksa kembali detail lowongan, terutama kriteria pelamar, lokasi kerja, dan informasi gaji.",
-    ];
-
-    if (whatsapp && telegram) {
-      steps.push(
-        "Pilih salah satu metode pendaftaran: WhatsApp atau Telegram."
-      );
-    } else if (whatsapp) {
-      steps.push(
-        "Klik tombol DAFTAR KE WHATSAPP."
-      );
-    } else {
-      steps.push(
-        "Klik tombol DAFTAR KE TELEGRAM."
+    if (channel === "whatsapp") {
+      url.searchParams.set(
+        "text",
+        jobCode
       );
     }
 
-    if (whatsapp) {
-      steps.push(
-        "WhatsApp: pesan berisi Job Code akan terisi otomatis. Tekan Kirim tanpa menambahkan teks lain."
+    if (
+      channel === "telegram" &&
+      /^[A-Za-z0-9_-]{1,64}$/.test(jobCode)
+    ) {
+      url.searchParams.set(
+        "start",
+        jobCode
       );
     }
 
-    if (telegram) {
-      if (validTelegramPayload) {
-        steps.push(
-          "Telegram: setelah bot terbuka, tekan tombol START/MULAI jika muncul, terutama jika ini pertama kali Kamu chat dengan bot. Job Code akan diteruskan ke bot melalui perintah /start secara otomatis."
-        );
-
-        steps.push(
-          "Jika bot meminta kode secara manual, klik Job Code di bawah untuk menyalin, lalu kirimkan hanya kode tersebut di chat Telegram."
-        );
-      } else {
-        steps.push(
-          "Telegram: setelah bot terbuka, tekan START/MULAI jika diminta. Salin Job Code di bawah, kemudian tempel dan kirimkan kodenya ke bot."
-        );
-      }
-    }
-
-    steps.push(
-      "Tunggu respons dari tim kami, lalu ikuti panduan atau instruksi selanjutnya."
-    );
-
-    return steps;
+    return url.href;
   }
 
   // ============================================================
-  // REGISTRATION BUTTON
+  // DYNAMIC MODAL INSTRUCTIONS
   // ============================================================
 
-  function createRegistrationButton(channel) {
-    const button = document.createElement("a");
+  function instructions(channels) {
+    const both = channels.length === 2;
 
-    button.className = [
-      "kv-job-registration-button",
-      `kv-job-${channel}-button`,
-      "kv-job-registration-disabled",
-    ].join(" ");
+    const items = [
+      "Periksa kembali detail lowongan, kriteria pelamar, lokasi kerja, dan informasi gaji."
+    ];
 
-    button.href = "#";
-
-    button.setAttribute(
-      "aria-disabled",
-      "true"
+    items.push(
+      both
+        ? "Pilih salah satu channel pendaftaran: WhatsApp atau Telegram."
+        : `Klik tombol DAFTAR KE ${channels[0].toUpperCase()}.`
     );
 
-    button.setAttribute(
-      "data-kv-registration-channel",
-      channel
+    if (channels.includes("whatsapp")) {
+      items.push(
+        "WhatsApp: Job Code sudah terisi otomatis. Tekan Kirim tanpa menambahkan teks lain."
+      );
+    }
+
+    if (channels.includes("telegram")) {
+      items.push(
+        "Telegram: buka bot. Jika ini pertama kali chat, tekan START/MULAI. Bot akan menerima Job Code melalui parameter /start."
+      );
+
+      items.push(
+        "Jika bot meminta kode secara manual, klik Job Code di bawah untuk menyalinnya, lalu kirim hanya kode tersebut ke bot."
+      );
+    }
+
+    items.push(
+      "Tunggu respons dari tim kami dan ikuti instruksi berikutnya."
     );
 
-    button.textContent =
-      channel === "telegram"
-        ? "DAFTAR KE TELEGRAM"
-        : "DAFTAR KE WHATSAPP";
-
-    button.addEventListener("click", event => {
-      if (
-        button.getAttribute("aria-disabled") === "true"
-      ) {
-        event.preventDefault();
-      }
-    });
-
-    return button;
+    return items;
   }
 
   // ============================================================
   // APPLY MODAL
   // ============================================================
 
-  function openApplyModal(jobCode, triggerElement) {
-    const cleanJobCode = normalizeText(jobCode);
+  function openApplyModal(
+    code,
+    trigger
+  ) {
+    const jobCode = makeJobCode(code);
 
-    if (!cleanJobCode) {
-      log("Job Code not found.");
+    if (!jobCode) {
+      log("Invalid Job Code:", code);
       return;
     }
 
     closeApplyModal(true);
 
-    const channels = getRegistrationChannels();
+    const channels =
+      registrationChannels();
 
     // Overlay
-    const overlay = document.createElement("div");
+    const overlay =
+      document.createElement("div");
 
     overlay.id = IDS.modal;
-    overlay.className = "kv-job-modal-overlay";
+    overlay.className =
+      "kv-job-modal-overlay";
 
-    overlay.setAttribute("role", "dialog");
-    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute(
+      "role",
+      "dialog"
+    );
+
+    overlay.setAttribute(
+      "aria-modal",
+      "true"
+    );
+
     overlay.setAttribute(
       "aria-labelledby",
       "kv-job-modal-title"
     );
 
     // Dialog
-    const dialog = document.createElement("div");
-    dialog.className = "kv-job-modal-dialog";
+    const dialog =
+      document.createElement("div");
 
-    // Close button
-    const closeButton = document.createElement("button");
+    dialog.className =
+      "kv-job-modal-dialog";
 
-    closeButton.type = "button";
-    closeButton.className = "kv-job-modal-close";
-    closeButton.setAttribute(
+    // Close
+    const close =
+      document.createElement("button");
+
+    close.type = "button";
+    close.className =
+      "kv-job-modal-close";
+
+    close.setAttribute(
       "aria-label",
       "Tutup modal"
     );
 
-    closeButton.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg"
-        width="20" height="20" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor"
-        stroke-width="2.25"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true">
-        <path d="M18 6 6 18"/>
-        <path d="m6 6 12 12"/>
-      </svg>
-    `;
+    close.innerHTML = icon("close");
 
-    closeButton.addEventListener(
+    close.addEventListener(
       "click",
       () => closeApplyModal()
     );
 
     // Title
-    const title = document.createElement("h2");
+    const title =
+      document.createElement("h2");
 
     title.id = "kv-job-modal-title";
-    title.textContent = "Konfirmasi Pendaftaran";
+    title.textContent =
+      "Konfirmasi Pendaftaran";
 
     // Introduction
-    const intro = document.createElement("p");
+    const intro =
+      document.createElement("p");
 
-    intro.className = "kv-job-modal-text";
+    intro.className =
+      "kv-job-modal-text";
 
     intro.textContent =
-      "Sebelum mendaftar, pastikan lowongan pekerjaan ini sesuai dengan minat dan Kamu sudah memenuhi syarat atau kriteria yang diminta.";
+      "Sebelum mendaftar, pastikan lowongan ini sesuai minat dan Kamu sudah memenuhi syarat atau kriteria yang diminta.";
 
     // Instruction heading
-    const instructionTitle = document.createElement("div");
+    const heading =
+      document.createElement("div");
 
-    instructionTitle.className = "kv-job-step-title";
-    instructionTitle.textContent = "Langkah pendaftaran";
+    heading.className =
+      "kv-job-step-title";
 
-    // Dynamic instructions
-    const instruction = document.createElement("ol");
-    instruction.className = "kv-job-step-list";
+    heading.textContent =
+      "Langkah pendaftaran";
 
-    getRegistrationInstructions(
-      channels,
-      cleanJobCode
-    ).forEach(text => {
-      const item = document.createElement("li");
-      item.textContent = text;
-      instruction.appendChild(item);
+    // Instruction list
+    const ol =
+      document.createElement("ol");
+
+    ol.className =
+      "kv-job-step-list";
+
+    instructions(channels).forEach(text => {
+      const li =
+        document.createElement("li");
+
+      li.textContent = text;
+
+      ol.appendChild(li);
     });
 
     // Job Code label
-    const codeLabel = document.createElement("div");
-    codeLabel.className = "kv-job-code-label";
-    codeLabel.textContent = "Job Code";
+    const label =
+      document.createElement("div");
 
-    // Job Code copy button
-    const codeButton = document.createElement("button");
+    label.className =
+      "kv-job-code-label";
+
+    label.textContent =
+      "Job Code";
+
+    // Copy button
+    const codeButton =
+      document.createElement("button");
 
     codeButton.type = "button";
-    codeButton.className = "kv-job-code-copy";
+
+    codeButton.className =
+      "kv-job-code-copy";
 
     codeButton.innerHTML = `
       <span class="kv-job-code-value"></span>
@@ -1745,67 +1520,67 @@
         <span class="kv-job-code-status-text">
           Klik untuk salin kode
         </span>
-        <svg xmlns="http://www.w3.org/2000/svg"
-          width="15" height="15" viewBox="0 0 24 24"
-          fill="none" stroke="currentColor"
-          stroke-width="2.25"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true">
-          <rect width="14" height="14"
-            x="8" y="8" rx="2" ry="2"/>
-          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-        </svg>
+        ${icon("copy")}
       </span>
     `;
 
     codeButton.querySelector(
       ".kv-job-code-value"
-    ).textContent = cleanJobCode;
+    ).textContent = jobCode;
 
-    codeButton.addEventListener("click", () => {
-      copyJobCode(cleanJobCode, codeButton);
-    });
+    codeButton.addEventListener(
+      "click",
+      () => copyJobCode(
+        jobCode,
+        codeButton
+      )
+    );
 
-    // Action container
-    const bottomActions = document.createElement("div");
-    bottomActions.className = "kv-job-modal-actions";
+    // Modal actions
+    const actions =
+      document.createElement("div");
 
-    // Detail button for index page only
+    actions.className =
+      "kv-job-modal-actions";
+
+    // DETAIL button for index
     if (!isDetailPage()) {
-      const detailButton = createButton(
+      const detail = createButton(
         "DETAIL",
-        "secondary"
+        "secondary",
+        "detail"
       );
 
-      detailButton.classList.add(
-        "kv-job-modal-detail-button"
-      );
+      detail.addEventListener(
+        "click",
+        () => {
+          closeApplyModal();
 
-      detailButton.addEventListener("click", () => {
-        closeApplyModal();
-
-        if (triggerElement) {
-          setTimeout(
-            () => goToDetail(triggerElement),
-            190
-          );
+          if (trigger) {
+            setTimeout(
+              () => goToDetail(trigger),
+              190
+            );
+          }
         }
-      });
+      );
 
-      bottomActions.appendChild(detailButton);
+      actions.appendChild(detail);
     } else {
-      bottomActions.classList.add(
+      actions.classList.add(
         "kv-job-modal-actions-single"
       );
     }
 
-    // Channel buttons container
-    const channelActions = document.createElement("div");
-    channelActions.className = "kv-job-modal-channels";
+    // Channel container
+    const channelActions =
+      document.createElement("div");
+
+    channelActions.className =
+      "kv-job-modal-channels";
 
     if (channels.length > 1) {
-      bottomActions.classList.add(
+      actions.classList.add(
         "kv-job-modal-actions-multi"
       );
 
@@ -1814,184 +1589,225 @@
       );
     }
 
-    const channelButtons = channels.map(channel => ({
-      channel,
-      button: createRegistrationButton(channel),
-    }));
+    // Registration buttons
+    const buttons = channels.map(channel => {
+      const anchor =
+        document.createElement("a");
 
-    channelButtons.forEach(({ button }) => {
-      channelActions.appendChild(button);
+      anchor.className = [
+        "kv-job-registration-button",
+        `kv-job-${channel}-button`,
+        "kv-job-registration-disabled"
+      ].join(" ");
+
+      anchor.href = "#";
+
+      anchor.setAttribute(
+        "aria-disabled",
+        "true"
+      );
+
+      anchor.textContent =
+        `DAFTAR KE ${channel.toUpperCase()}`;
+
+      anchor.addEventListener(
+        "click",
+        event => {
+          if (
+            anchor.getAttribute(
+              "aria-disabled"
+            ) === "true"
+          ) {
+            event.preventDefault();
+          }
+        }
+      );
+
+      channelActions.appendChild(anchor);
+
+      return {
+        channel,
+        anchor
+      };
     });
 
-    bottomActions.appendChild(channelActions);
+    actions.appendChild(
+      channelActions
+    );
 
-    // Assemble dialog
     dialog.append(
-      closeButton,
+      close,
       title,
       intro,
-      instructionTitle,
-      instruction,
-      codeLabel,
+      heading,
+      ol,
+      label,
       codeButton,
-      bottomActions
+      actions
     );
 
     overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
+
+    document.body.appendChild(
+      overlay
+    );
 
     document.body.classList.add(
       "kv-job-modal-open"
     );
 
-    // Close by clicking backdrop
-    overlay.addEventListener("click", event => {
-      if (event.target === overlay) {
-        closeApplyModal();
+    overlay.addEventListener(
+      "click",
+      event => {
+        if (event.target === overlay) {
+          closeApplyModal();
+        }
       }
-    });
+    );
 
     document.addEventListener(
       "keydown",
-      closeOnEscape
+      onEscape
     );
 
-    // Start registration countdown
-    startRegistrationCountdown(
-      channelButtons,
-      cleanJobCode
+    startCountdown(
+      buttons,
+      jobCode
     );
 
     requestAnimationFrame(() => {
-      if (!overlay.isConnected) return;
+      if (!overlay.isConnected) {
+        return;
+      }
 
       overlay.classList.add(
         "kv-job-modal-visible"
       );
 
-      closeButton.focus();
+      close.focus();
     });
   }
 
   // ============================================================
-  // COUNTDOWN FOR ALL REGISTRATION CHANNELS
+  // REGISTRATION COUNTDOWN
   // ============================================================
 
-  function startRegistrationCountdown(
-    channelButtons,
-    jobCode
+  function startCountdown(
+    buttons,
+    code
   ) {
-    clearInterval(state.modalCountdownTimer);
-
-    const delay = Math.max(
-      0,
-      Number(CONFIG.registrationDelaySeconds) || 0
+    clearInterval(
+      state.countdownTimer
     );
 
-    const unlockAt =
-      Date.now() + Math.ceil(delay * 1000);
+    const seconds = Math.max(
+      0,
+      Number(
+        CONFIG.registrationDelaySeconds
+      ) || 0
+    );
 
-    const setButtonLabel = (
-      button,
-      channel,
-      remaining
-    ) => {
-      const name =
-        channel === "telegram"
-          ? "TELEGRAM"
-          : "WHATSAPP";
+    const readyAt =
+      Date.now() +
+      Math.ceil(seconds * 1000);
 
-      button.textContent =
-        "DAFTAR KE " +
-        name +
-        (remaining > 0 ? ` (${remaining})` : "");
-    };
-
-    const updateCountdown = () => {
+    const update = () => {
       const remaining = Math.max(
         0,
         Math.ceil(
-          (unlockAt - Date.now()) / 1000
+          (readyAt - Date.now()) / 1000
         )
       );
 
-      channelButtons.forEach(({ button, channel }) => {
-        setButtonLabel(
-          button,
+      buttons.forEach(({
+        channel,
+        anchor
+      }) => {
+        anchor.textContent =
+          `DAFTAR KE ${channel.toUpperCase()}` +
+          (
+            remaining
+              ? ` (${remaining})`
+              : ""
+          );
+
+        if (remaining) return;
+
+        anchor.href = registrationUrl(
           channel,
-          remaining
+          code
         );
 
-        if (remaining > 0) return;
+        anchor.target = "_blank";
 
-        button.href = getRegistrationUrl(
-          channel,
-          jobCode
-        );
+        anchor.rel =
+          "noopener noreferrer";
 
-        button.target = "_blank";
-        button.rel = "noopener noreferrer";
-
-        button.setAttribute(
+        anchor.setAttribute(
           "aria-disabled",
           "false"
         );
 
-        button.classList.remove(
+        anchor.classList.remove(
           "kv-job-registration-disabled"
         );
       });
 
-      if (remaining === 0) {
+      if (!remaining) {
         clearInterval(
-          state.modalCountdownTimer
+          state.countdownTimer
         );
 
-        state.modalCountdownTimer = null;
+        state.countdownTimer = null;
       }
     };
 
-    updateCountdown();
+    update();
 
-    if (delay > 0) {
-      state.modalCountdownTimer = setInterval(
-        updateCountdown,
+    if (seconds > 0) {
+      state.countdownTimer = setInterval(
+        update,
         250
       );
     }
   }
 
   // ============================================================
-  // MODAL CLOSE
+  // CLOSE MODAL
   // ============================================================
 
-  function closeOnEscape(event) {
+  function onEscape(event) {
     if (event.key === "Escape") {
       closeApplyModal();
     }
   }
 
-  function closeApplyModal(immediate = false) {
-    clearInterval(state.modalCountdownTimer);
-    state.modalCountdownTimer = null;
-
-    const modal = document.getElementById(
-      IDS.modal
+  function closeApplyModal(
+    immediately = false
+  ) {
+    clearInterval(
+      state.countdownTimer
     );
 
+    state.countdownTimer = null;
+
+    const modal =
+      document.getElementById(
+        IDS.modal
+      );
+
     if (modal) {
-      if (immediate) {
+      if (immediately) {
         modal.remove();
       } else {
         modal.classList.remove(
           "kv-job-modal-visible"
         );
 
-        setTimeout(() => {
-          if (modal.parentElement) {
-            modal.remove();
-          }
-        }, 180);
+        setTimeout(
+          () => modal.remove(),
+          180
+        );
       }
     }
 
@@ -2001,7 +1817,7 @@
 
     document.removeEventListener(
       "keydown",
-      closeOnEscape
+      onEscape
     );
   }
 
@@ -2009,69 +1825,63 @@
   // COPY JOB CODE
   // ============================================================
 
-  async function copyJobCode(jobCode, button) {
-    try {
-      await navigator.clipboard.writeText(jobCode);
+  async function copyJobCode(
+    code,
+    button
+  ) {
+    let copied = false;
 
-      setCopyStatus(
-        button,
-        "Kode berhasil disalin",
-        true
+    try {
+      await navigator.clipboard.writeText(
+        code
       );
+
+      copied = true;
     } catch {
-      fallbackCopy(jobCode, button);
+      const input =
+        document.createElement(
+          "textarea"
+        );
+
+      input.value = code;
+
+      input.style.position =
+        "fixed";
+
+      input.style.left =
+        "-9999px";
+
+      document.body.appendChild(input);
+
+      input.select();
+
+      try {
+        copied =
+          document.execCommand("copy");
+      } catch {}
+
+      input.remove();
     }
-  }
-
-  function fallbackCopy(text, button) {
-    const input = document.createElement("textarea");
-
-    input.value = text;
-    input.setAttribute("readonly", "readonly");
-
-    input.style.position = "fixed";
-    input.style.top = "-1000px";
-
-    document.body.appendChild(input);
-    input.select();
-
-    let success = false;
-
-    try {
-      success = document.execCommand("copy");
-    } catch {}
-
-    input.remove();
-
-    setCopyStatus(
-      button,
-      success
-        ? "Kode berhasil disalin"
-        : "Copy gagal. Silakan salin kode manual.",
-      success
-    );
-  }
-
-  function setCopyStatus(button, message, success) {
-    if (!button) return;
-
-    const status = button.querySelector(
-      ".kv-job-code-status-text"
-    );
-
-    if (!status) return;
 
     button.classList.toggle(
       "kv-job-code-copied",
-      Boolean(success)
+      copied
     );
 
     button.classList.toggle(
       "kv-job-code-copy-failed",
-      !success
+      !copied
     );
 
-    status.textContent = message;
+    const text = button.querySelector(
+      ".kv-job-code-status-text"
+    );
+
+    if (text) {
+      text.textContent = copied
+        ? "Kode berhasil disalin"
+        : "Gagal menyalin. Silakan salin manual.";
+    }
 
     setTimeout(() => {
       if (!button.isConnected) return;
@@ -2081,9 +1891,211 @@
         "kv-job-code-copy-failed"
       );
 
-      status.textContent =
-        "Klik untuk salin kode";
+      if (text) {
+        text.textContent =
+          "Klik untuk salin kode";
+      }
     }, 2400);
+  }
+
+  // ============================================================
+  // IP RESTRICTION
+  // ============================================================
+
+  async function isAccessAllowed() {
+    const cfg =
+      CONFIG.ipRestriction;
+
+    if (!cfg.enabled) {
+      return true;
+    }
+
+    const ips = [];
+
+    try {
+      const urlIp = norm(
+        new URLSearchParams(
+          location.search
+        ).get(cfg.overrideQueryParam)
+      );
+
+      if (urlIp) {
+        localStorage.setItem(
+          cfg.overrideLocalStorageKey,
+          urlIp
+        );
+      }
+
+      const override =
+        urlIp ||
+        norm(
+          localStorage.getItem(
+            cfg.overrideLocalStorageKey
+          )
+        );
+
+      if (override) {
+        ips.push(override);
+      }
+    } catch {}
+
+    await Promise.all(
+      cfg.publicIpUrls.map(async url => {
+        const controller =
+          new AbortController();
+
+        const timeout = setTimeout(
+          () => controller.abort(),
+          cfg.timeoutMs
+        );
+
+        try {
+          const response = await fetch(
+            url,
+            {
+              signal: controller.signal,
+              cache: "no-store"
+            }
+          );
+
+          if (!response.ok) return;
+
+          const text = response.headers
+            .get("content-type")
+            ?.includes("json")
+              ? (await response.json()).ip
+              : await response.text();
+
+          ips.push(norm(text));
+        } catch (error) {
+          log(
+            "IP lookup error:",
+            error
+          );
+        } finally {
+          clearTimeout(timeout);
+        }
+      })
+    );
+
+    ips.push(
+      ...await getLocalIpsViaWebRtc(
+        cfg.timeoutMs
+      )
+    );
+
+    const unique = [
+      ...new Set(
+        ips.filter(ip =>
+          /^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip)
+        )
+      )
+    ];
+
+    const allowed =
+      unique.some(ip =>
+        cfg.allowedIps.includes(ip)
+      ) ||
+      (
+        !unique.length &&
+        cfg.allowWhenUnknown
+      );
+
+    if (!allowed) {
+      log(
+        "Access denied: IP not allowed",
+        unique
+      );
+    }
+
+    return allowed;
+  }
+
+  function getLocalIpsViaWebRtc(timeoutMs) {
+    return new Promise(resolve => {
+      const Peer =
+        window.RTCPeerConnection ||
+        window.webkitRTCPeerConnection;
+
+      if (!Peer) {
+        resolve([]);
+        return;
+      }
+
+      const ips = new Set();
+
+      let peer;
+      let done = false;
+
+      const finish = () => {
+        if (done) return;
+
+        done = true;
+
+        clearTimeout(timer);
+
+        try {
+          peer?.close();
+        } catch {}
+
+        resolve([...ips]);
+      };
+
+      const collect = value => {
+        const matches = String(
+          value || ""
+        ).match(
+          /\b(?:\d{1,3}\.){3}\d{1,3}\b/g
+        ) || [];
+
+        for (const match of matches) {
+          if (
+            match.split(".").every(
+              n => Number(n) <= 255
+            )
+          ) {
+            ips.add(match);
+          }
+        }
+      };
+
+      const timer = setTimeout(
+        finish,
+        timeoutMs
+      );
+
+      try {
+        peer = new Peer({
+          iceServers: []
+        });
+
+        peer.createDataChannel(
+          "kv-ip-check"
+        );
+
+        peer.onicecandidate = event => {
+          if (event.candidate) {
+            collect(
+              event.candidate.candidate
+            );
+          } else {
+            finish();
+          }
+        };
+
+        peer.createOffer()
+          .then(offer => {
+            collect(offer.sdp);
+
+            return peer.setLocalDescription(
+              offer
+            );
+          })
+          .catch(finish);
+      } catch {
+        finish();
+      }
+    });
   }
 
   // ============================================================
@@ -2091,20 +2103,22 @@
   // ============================================================
 
   function installStyles() {
-    let style = document.getElementById(
-      IDS.style
-    );
+    let style =
+      document.getElementById(
+        IDS.style
+      );
 
     if (!style) {
-      style = document.createElement("style");
+      style =
+        document.createElement("style");
+
       style.id = IDS.style;
+
       document.head.appendChild(style);
     }
 
     style.textContent = `
-      /* ======================================================
-         INDEX PAGE
-         ====================================================== */
+      /* INDEX PAGE */
 
       .kv-job-card-actions {
         display: grid !important;
@@ -2129,34 +2143,28 @@
         border-spacing: 0 12px !important;
       }
 
-      tr.kv-list-record.kv-job-list-card-mobile-enhanced {
+      tr.kv-job-list-card-mobile-enhanced {
         display: block !important;
         width: calc(100% - 20px) !important;
         margin: 10px 10px 16px !important;
         border: 1px solid #dbeafe !important;
         border-radius: 6px !important;
-        background: #ffffff !important;
+        background: white !important;
         overflow: hidden !important;
       }
 
-      tr.kv-list-record.kv-job-list-card-mobile-enhanced
-        > td:first-child {
+      tr.kv-job-list-card-mobile-enhanced > td:first-child {
         display: block !important;
         width: 100% !important;
         border: 0 !important;
         box-sizing: border-box !important;
       }
 
-      tr.kv-list-record.kv-job-list-card-mobile-enhanced
-        > td:first-child dl {
+      tr.kv-job-list-card-mobile-enhanced > td:first-child dl {
         padding: 14px 10px 0 !important;
       }
 
-      tr.kv-list-record.kv-job-list-card-mobile-enhanced
-        > td:not(:first-child) {
-        display: none !important;
-      }
-
+      tr.kv-job-list-card-mobile-enhanced > td:not(:first-child),
       .kv-job-native-arrow-hidden,
       .kv-job-empty-field-hidden,
       .kv-job-pdf-url-field-hidden {
@@ -2165,82 +2173,58 @@
 
       .kv-job-table-action-cell {
         min-width: 190px;
-        border: 1px solid #e5e7eb;
         padding: 8px;
         vertical-align: middle;
-        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        background: white;
       }
 
-      .kv-job-table-action-cell .kv-job-card-actions {
+      .kv-job-table-action-cell > .kv-job-card-actions {
         grid-template-columns: 1fr;
         gap: 8px;
-        margin-top: 0;
-        padding: 0;
-        border-top: 0;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0;
       }
 
-      /* ======================================================
-         BASE BUTTONS
-         ====================================================== */
+      /* BASE BUTTONS */
 
       .kv-job-button {
         appearance: none;
         border: 1px solid #cbd5e1;
         border-radius: 6px;
         display: inline-flex;
-        align-items: center;
         justify-content: center;
+        align-items: center;
         min-height: 42px;
         padding: 10px 12px;
         font-size: 13px;
         font-weight: 800;
-        letter-spacing: 0;
         line-height: 1;
         cursor: pointer;
-        box-shadow: none;
         transition:
-          transform 120ms ease,
-          border-color 120ms ease,
-          background 120ms ease,
-          color 120ms ease;
+          background .12s,
+          border-color .12s,
+          transform .12s;
       }
 
       .kv-job-button-content,
       .kv-job-back-button {
         display: inline-flex !important;
-        align-items: center;
         justify-content: center;
+        align-items: center;
         gap: 7px;
         min-width: 0;
       }
 
-      .kv-job-button svg,
-      .kv-job-back-button svg {
-        flex: 0 0 auto;
-      }
-
       .kv-job-button-label,
       .kv-job-back-label {
-        min-width: 0;
-        overflow-wrap: normal;
         white-space: nowrap;
       }
 
-      .kv-job-button:hover {
-        border-color: #0079d2;
-      }
-
-      .kv-job-button:active {
-        transform: translateY(1px);
-      }
-
-      .kv-job-button:focus-visible,
-      .kv-job-back-button:focus-visible,
-      .kv-job-code-copy:focus-visible,
-      .kv-job-modal-close:focus-visible,
-      .kv-job-registration-button:focus-visible {
-        outline: 3px solid rgba(37, 99, 235, 0.38);
-        outline-offset: 2px;
+      .kv-job-button svg,
+      .kv-job-back-button svg {
+        flex-shrink: 0;
       }
 
       .kv-job-button-primary {
@@ -2256,8 +2240,8 @@
 
       .kv-job-button-secondary {
         background: #ffffff;
-        color: #111827;
         border-color: #cbd5e1;
+        color: #111827;
       }
 
       .kv-job-button-secondary:hover {
@@ -2265,9 +2249,16 @@
         color: #005ea8;
       }
 
-      /* ======================================================
-         DETAIL PAGE TOOLBAR
-         ====================================================== */
+      .kv-job-button:focus-visible,
+      .kv-job-back-button:focus-visible,
+      .kv-job-code-copy:focus-visible,
+      .kv-job-modal-close:focus-visible,
+      .kv-job-registration-button:focus-visible {
+        outline: 3px solid rgba(37,99,235,.38);
+        outline-offset: 2px;
+      }
+
+      /* DETAIL TOOLBAR */
 
       .kv-job-detail-toolbar {
         display: flex;
@@ -2292,24 +2283,13 @@
         color: #0079d2 !important;
         font-size: 13px;
         font-weight: 800;
-        line-height: 1 !important;
         text-decoration: none !important;
         box-sizing: border-box;
-        transition:
-          transform 120ms ease,
-          border-color 120ms ease,
-          background 120ms ease,
-          color 120ms ease;
       }
 
       .kv-job-back-button:hover {
         background: #eff6ff;
         border-color: #0079d2;
-        color: #005ea8 !important;
-      }
-
-      .kv-job-back-button:active {
-        transform: translateY(1px);
       }
 
       .kv-job-detail-toolbar .kv-job-button {
@@ -2338,12 +2318,11 @@
           display: grid !important;
           grid-template-columns: 1fr 1fr;
           gap: 8px;
-          align-items: stretch;
         }
 
         .kv-job-detail-toolbar.kv-job-detail-toolbar-has-pdf {
           grid-template-columns:
-            minmax(90px, 0.82fr)
+            minmax(90px, .82fr)
             minmax(150px, 1.35fr);
         }
 
@@ -2359,7 +2338,6 @@
           min-height: 44px;
           padding: 10px 8px;
           font-size: 12px;
-          line-height: 1;
         }
 
         .kv-job-detail-toolbar
@@ -2370,22 +2348,9 @@
           .kv-job-download-pdf-button + .kv-job-button {
           margin-left: 0;
         }
-
-        .kv-job-detail-toolbar .kv-job-button-content,
-        .kv-job-detail-toolbar .kv-job-back-button {
-          gap: 5px;
-        }
-
-        .kv-job-detail-toolbar .kv-job-button svg,
-        .kv-job-detail-toolbar .kv-job-back-button svg {
-          width: 15px;
-          height: 15px;
-        }
       }
 
-      /* ======================================================
-         MODAL OVERLAY
-         ====================================================== */
+      /* MODAL */
 
       .kv-job-modal-open {
         overflow: hidden;
@@ -2399,15 +2364,15 @@
         align-items: center;
         justify-content: center;
         padding: 18px;
-        background: rgba(15, 23, 42, 0);
+        background: rgba(15,23,42,0);
         opacity: 0;
         transition:
-          opacity 180ms ease,
-          background 180ms ease;
+          opacity .18s,
+          background .18s;
       }
 
       .kv-job-modal-visible {
-        background: rgba(15, 23, 42, 0.58);
+        background: rgba(15,23,42,.58);
         opacity: 1;
       }
 
@@ -2420,41 +2385,36 @@
         background: #ffffff;
         color: #111827;
         box-shadow:
-          0 24px 80px rgba(17, 24, 39, 0.24);
+          0 24px 80px rgba(17,24,39,.24);
         padding: 24px 20px 20px;
         transform:
-          translateY(12px) scale(0.98);
-        transition: transform 180ms ease;
+          translateY(12px) scale(.98);
+        transition: transform .18s;
       }
 
       .kv-job-modal-visible .kv-job-modal-dialog {
-        transform: translateY(0) scale(1);
+        transform:
+          translateY(0) scale(1);
       }
 
       .kv-job-modal-close {
         position: absolute;
         top: 12px;
         right: 12px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
         width: 36px;
         height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         border: 1px solid #d1d5db;
         border-radius: 6px;
         background: #ffffff;
         color: #374151;
         cursor: pointer;
-        transition:
-          background 140ms ease,
-          border-color 140ms ease,
-          color 140ms ease;
       }
 
       .kv-job-modal-close:hover {
         background: #f3f4f6;
-        border-color: #9ca3af;
-        color: #111827;
       }
 
       .kv-job-modal-dialog h2 {
@@ -2462,7 +2422,6 @@
         font-size: 20px;
         font-weight: 800;
         line-height: 1.25;
-        letter-spacing: 0;
       }
 
       .kv-job-modal-text {
@@ -2472,20 +2431,17 @@
         line-height: 1.6;
       }
 
-      /* ======================================================
-         REGISTRATION STEPS
-         ====================================================== */
+      /* INSTRUCTIONS */
 
       .kv-job-step-title {
         margin: 16px 0 8px;
         font-size: 13px;
         font-weight: 900;
-        color: #111827;
       }
 
       .kv-job-step-list {
-        margin: 0 0 16px 0;
-        padding: 0 0 0 24px;
+        margin: 0 0 16px;
+        padding-left: 24px;
         color: #374151;
         font-size: 14px;
         line-height: 1.55;
@@ -2495,13 +2451,11 @@
       .kv-job-step-list li {
         display: list-item !important;
         list-style: decimal !important;
-        margin: 0 0 7px;
+        margin-bottom: 7px;
         padding-left: 4px;
       }
 
-      /* ======================================================
-         JOB CODE
-         ====================================================== */
+      /* JOB CODE */
 
       .kv-job-code-label {
         margin: 18px 0 4px;
@@ -2509,13 +2463,11 @@
         font-weight: 900;
         color: #6b7280;
         text-transform: uppercase;
-        letter-spacing: 0;
       }
 
       .kv-job-code-copy {
         display: grid;
         grid-template-columns: 1fr;
-        grid-template-rows: auto auto;
         justify-items: center;
         gap: 10px;
         width: 100%;
@@ -2526,33 +2478,19 @@
         padding: 14px;
         font-size: 19px;
         font-weight: 900;
-        letter-spacing: 0;
         cursor: pointer;
         overflow-wrap: anywhere;
         text-align: center;
-        transition:
-          background 140ms ease,
-          border-color 140ms ease;
       }
 
       .kv-job-code-copy:hover {
         background: #dbeafe;
       }
 
-      .kv-job-code-value {
-        display: block;
-        grid-column: 1;
-        justify-self: center;
-      }
-
       .kv-job-code-status {
         display: inline-flex;
         align-items: center;
-        justify-content: center;
         gap: 7px;
-        grid-column: 1;
-        justify-self: center;
-        min-height: 22px;
         border-radius: 999px;
         background: #ffffff;
         color: #0079d2;
@@ -2561,13 +2499,19 @@
         font-weight: 800;
       }
 
+      .kv-job-code-status svg {
+        width: 15px;
+        height: 15px;
+      }
+
       .kv-job-code-copied {
         border-color: #16a34a;
         background: #ecfdf5;
         color: #14532d;
       }
 
-      .kv-job-code-copied .kv-job-code-status {
+      .kv-job-code-copied
+        .kv-job-code-status {
         background: #16a34a;
         color: #ffffff;
       }
@@ -2578,64 +2522,18 @@
         color: #7f1d1d;
       }
 
-      .kv-job-code-copy-failed .kv-job-code-status {
+      .kv-job-code-copy-failed
+        .kv-job-code-status {
         background: #dc2626;
         color: #ffffff;
       }
 
-      /* ======================================================
-         REGISTRATION CHANNEL BUTTONS
-         ====================================================== */
-
-      .kv-job-registration-button {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 0;
-        min-height: 46px;
-        width: 100%;
-        border: 1px solid transparent;
-        border-radius: 6px;
-        padding: 10px 8px;
-        background: #0079d2;
-        color: #ffffff !important;
-        font-size: 13px;
-        font-weight: 900;
-        line-height: 1.3;
-        text-align: center;
-        overflow-wrap: break-word;
-        box-sizing: border-box;
-        text-decoration: none !important;
-        letter-spacing: 0;
-        transition:
-          background 140ms ease,
-          transform 140ms ease;
-      }
-
-      .kv-job-whatsapp-button {
-        background: #0079d2;
-      }
-
-      .kv-job-whatsapp-button:hover {
-        background: #006bb9;
-      }
-
-      .kv-job-telegram-button {
-        background: #229ed9;
-      }
-
-      .kv-job-telegram-button:hover {
-        background: #1686c0;
-      }
-
-      /* ======================================================
-         MODAL ACTION LAYOUT
-         ====================================================== */
+      /* ACTIONS */
 
       .kv-job-modal-actions {
         display: grid;
         grid-template-columns:
-          minmax(110px, 0.62fr)
+          minmax(110px, .62fr)
           minmax(0, 1.38fr);
         gap: 10px;
         margin-top: 16px;
@@ -2658,12 +2556,50 @@
           repeat(2, minmax(0, 1fr));
       }
 
-      .kv-job-modal-actions .kv-job-button,
-      .kv-job-modal-actions
-        .kv-job-registration-button {
+      .kv-job-registration-button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
         min-height: 46px;
-        margin: 0;
+        border-radius: 6px;
+        padding: 10px 8px;
+        box-sizing: border-box;
+        color: #ffffff !important;
+        font-size: 13px;
+        font-weight: 900;
+        text-align: center;
+        text-decoration: none !important;
+        overflow-wrap: anywhere;
+        line-height: 1.3;
       }
+
+      .kv-job-modal-actions
+        .kv-job-button {
+        min-height: 46px;
+      }
+
+      /* WHATSAPP */
+
+      .kv-job-whatsapp-button {
+        background: #0079d2;
+      }
+
+      .kv-job-whatsapp-button:hover {
+        background: #006bb9;
+      }
+
+      /* TELEGRAM */
+
+      .kv-job-telegram-button {
+        background: #229ed9;
+      }
+
+      .kv-job-telegram-button:hover {
+        background: #1686c0;
+      }
+
+      /* DISABLED */
 
       .kv-job-registration-disabled,
       .kv-job-registration-disabled:hover {
