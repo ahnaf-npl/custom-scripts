@@ -47,7 +47,7 @@
     // "telegram" = hanya Telegram
     // "both"     = WhatsApp dan Telegram
 
-    registrationMode: "both",
+    registrationMode: "telegram",
 
     // Delay tombol pendaftaran dalam detik
     registrationDelaySeconds: 5,
