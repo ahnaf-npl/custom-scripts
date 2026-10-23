@@ -49,7 +49,7 @@
     // "telegram" = Telegram saja
     // "both"     = Keduanya
 
-    registrationMode: "whatsapp",
+    registrationMode: "telegram",
 
     registrationDelaySeconds: 5,
 
