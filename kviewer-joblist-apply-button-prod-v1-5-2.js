@@ -1375,7 +1375,7 @@
 
     if (channels.includes("telegram")) {
       items.push(
-        "Telegram (pengguna baru): jika muncul tombol START/MULAI, tekan tombol tersebut terlebih dahulu. Setelah itu, kembali ke halaman ini dan klik DAFTAR KE TELEGRAM sekali lagi jika Job Code belum terisi."
+        "Telegram (pengguna baru): jika muncul tombol START/MULAI, tekan tombol tersebut terlebih dahulu kemudian kirimkan Job Code yang sudah terisi. Jika Job Code belum terisi, kembali ke halaman ini dan klik DAFTAR KE TELEGRAM sekali lagi."
       );
 
       items.push(
